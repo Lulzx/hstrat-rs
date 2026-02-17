@@ -1,16 +1,18 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
+use super::geometric_seq_nth_root::GeometricSeqNthRootPolicy;
+use super::recency_proportional::RecencyProportionalPolicy;
 use super::r#trait::StratumRetentionPolicy;
-use crate::bit_floor;
 
 /// Retains strata using a recency-proportional approach with an upper bound
 /// on the number of retained strata.
 ///
-/// In the early phase (when fewer than `size_curb` strata have been deposited),
-/// all strata are retained (like a perfect-resolution policy).  Once the
-/// number of strata would exceed `size_curb`, the policy transitions to
-/// recency-proportional spacing with a resolution derived from `size_curb`.
+/// Dynamically picks between `RecencyProportionalPolicy` and
+/// `GeometricSeqNthRootPolicy` depending on the number of depositions and
+/// the `size_curb` budget.
+///
+/// Matches Python hstrat's `recency_proportional_resolution_curbed_algo`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CurbedRecencyProportionalPolicy {
     pub size_curb: u64,
@@ -23,69 +25,57 @@ impl CurbedRecencyProportionalPolicy {
     }
 }
 
-/// Calculate provided uncertainty for recency-proportional spacing.
-/// Uses `resolution + 1` as divisor, matching RecencyProportionalPolicy.
-fn calc_provided_uncertainty(resolution: u64, num_completed: u64) -> u64 {
-    let max_unc = num_completed / (resolution + 1);
-    bit_floor(max_unc).max(1)
+/// Compute the provided resolution for a given size_curb and number of
+/// depositions.
+///
+/// Python: `size_curb // (int(n).bit_length() + 1) - 1`
+/// Returns -1 (as `None`) if below threshold (2).
+fn calc_provided_resolution(
+    size_curb: u64,
+    num_strata_deposited: u64,
+) -> Option<u64> {
+    let bit_len = 64 - (num_strata_deposited as u64).leading_zeros() as u64;
+    let res = size_curb / (bit_len + 1);
+    if res < 1 {
+        return None;
+    }
+    let resolution = res - 1;
+    // Threshold: resolution must be >= 2
+    if resolution >= 2 {
+        Some(resolution)
+    } else {
+        None
+    }
 }
 
-/// Compute retained ranks using recency-proportional spacing with the given
-/// resolution.
-fn recency_proportional_ranks(resolution: u64, num_strata_deposited: u64) -> Vec<u64> {
-    if num_strata_deposited == 0 {
-        return Vec::new();
-    }
-    let newest_rank = num_strata_deposited - 1;
-    let mut retained = Vec::new();
-
-    let mut rank = 0u64;
-    while rank <= newest_rank {
-        retained.push(rank);
-        if rank == newest_rank {
-            break;
-        }
-        let num_completed = newest_rank - rank;
-        let step = calc_provided_uncertainty(resolution, num_completed);
-        let next = rank + step;
-        if next > newest_rank {
-            if *retained.last().unwrap() != newest_rank {
-                retained.push(newest_rank);
-            }
-            break;
-        }
-        rank = next;
-    }
-
-    if let Some(&last) = retained.last() {
-        if last != newest_rank {
-            retained.push(newest_rank);
-        }
-    }
-
-    retained
+/// Compute the provided degree for the geom_seq_nth_root fallback.
+///
+/// Python: `max((size_curb - 2) // (2 * interspersal + 2), 1)`
+fn calc_provided_degree(size_curb: u64, interspersal: u64) -> u64 {
+    ((size_curb - 2) / (2 * interspersal + 2)).max(1)
 }
 
-/// Compute the set of retained ranks for the curbed policy.
+/// Compute the set of retained ranks for the curbed policy by delegating to
+/// either RecencyProportionalPolicy or GeometricSeqNthRootPolicy.
 fn compute_retained_ranks(size_curb: u64, num_strata_deposited: u64) -> Vec<u64> {
     if num_strata_deposited == 0 {
         return Vec::new();
     }
 
-    // Early phase: retain everything
-    if num_strata_deposited <= size_curb {
-        return (0..num_strata_deposited).collect();
+    match calc_provided_resolution(size_curb, num_strata_deposited) {
+        Some(resolution) => {
+            // Use recency-proportional with computed resolution
+            let policy = RecencyProportionalPolicy::new(resolution);
+            policy.iter_retained_ranks(num_strata_deposited).collect()
+        }
+        None => {
+            // Use geom_seq_nth_root with computed degree and interspersal=2
+            let interspersal = 2u64;
+            let degree = calc_provided_degree(size_curb, interspersal);
+            let policy = GeometricSeqNthRootPolicy::new(degree, interspersal);
+            policy.iter_retained_ranks(num_strata_deposited).collect()
+        }
     }
-
-    // Later phase: use recency-proportional spacing.
-    // Derive resolution from size_curb.  The idea is that the resolution
-    // controls how many "bands" there are.  We want the total retained
-    // count to stay around size_curb.
-    // A reasonable derivation: resolution ~ size_curb / 2
-    // (leaves headroom for the extra strata the recency-proportional
-    // algorithm retains at finer granularities near the newest rank).
-    let resolution = (size_curb / 2).max(1);
-    recency_proportional_ranks(resolution, num_strata_deposited)
 }
 
 impl StratumRetentionPolicy for CurbedRecencyProportionalPolicy {
@@ -167,29 +157,6 @@ mod tests {
     }
 
     #[test]
-    fn test_early_phase_retains_all() {
-        let policy = CurbedRecencyProportionalPolicy::new(20);
-        // Before reaching size_curb, everything is retained.
-        for n in 0..=20 {
-            let count = policy.calc_num_strata_retained_exact(n);
-            assert_eq!(count, n, "early phase should retain all at n={n}");
-        }
-    }
-
-    #[test]
-    fn test_late_phase_bounded() {
-        let policy = CurbedRecencyProportionalPolicy::new(20);
-        // After many depositions, retained count should not grow unboundedly.
-        let count_100 = policy.calc_num_strata_retained_exact(100);
-        let count_500 = policy.calc_num_strata_retained_exact(500);
-        // The growth should be sub-linear.
-        assert!(count_500 < 500, "should not retain all 500 strata");
-        // Sanity: should retain at least 2 (rank 0 and newest).
-        assert!(count_100 >= 2);
-        assert!(count_500 >= 2);
-    }
-
-    #[test]
     fn test_endpoints_always_retained() {
         let policy = CurbedRecencyProportionalPolicy::new(10);
         for n in 1..100 {
@@ -229,15 +196,6 @@ mod tests {
         let policy = CurbedRecencyProportionalPolicy::new(10);
         let retained = compute_retained_ranks(10, 50);
         let dropped = policy.gen_drop_ranks(50, &retained);
-        assert!(dropped.is_empty());
-    }
-
-    #[test]
-    fn test_gen_drop_ranks_early_phase() {
-        let policy = CurbedRecencyProportionalPolicy::new(20);
-        // In early phase, nothing should be dropped from a complete set.
-        let all: Vec<u64> = (0..10).collect();
-        let dropped = policy.gen_drop_ranks(10, &all);
         assert!(dropped.is_empty());
     }
 

@@ -168,6 +168,137 @@ impl Trie {
     }
 }
 
+/// Naive trie for phylogenetic tree reconstruction (legacy fallback).
+///
+/// Unlike [`Trie`], this does NOT use a search table for descendant lookup.
+/// Instead, it walks the tree recursively, making it O(N*D) per insertion
+/// where D is the tree depth. Exponential worst case for pathological inputs.
+/// Required by the plan for compatibility testing against ShortcutConsolidation.
+#[derive(Debug, Clone)]
+pub struct NaiveTrie {
+    pub parent: Vec<u32>,
+    pub rank: Vec<u64>,
+    pub differentia: Vec<u64>,
+    pub is_leaf: Vec<bool>,
+    pub taxon_id: Vec<Option<u32>>,
+    pub children: Vec<Vec<u32>>,
+}
+
+impl NaiveTrie {
+    /// Create a new naive trie with a virtual root node.
+    pub fn new() -> Self {
+        Self {
+            parent: alloc::vec![NO_PARENT],
+            rank: alloc::vec![u64::MAX],
+            differentia: alloc::vec![0],
+            is_leaf: alloc::vec![false],
+            taxon_id: alloc::vec![None],
+            children: alloc::vec![Vec::new()],
+        }
+    }
+
+    /// Number of nodes (including virtual root and orphaned nodes).
+    pub fn len(&self) -> usize {
+        self.parent.len()
+    }
+
+    /// Add a node as a child of `parent_idx`.
+    pub fn add_node(
+        &mut self,
+        parent_idx: u32,
+        rank: u64,
+        diff: u64,
+        is_leaf: bool,
+        taxon: Option<u32>,
+    ) -> u32 {
+        let idx = self.parent.len() as u32;
+        self.parent.push(parent_idx);
+        self.rank.push(rank);
+        self.differentia.push(diff);
+        self.is_leaf.push(is_leaf);
+        self.taxon_id.push(taxon);
+        self.children.push(Vec::new());
+        self.children[parent_idx as usize].push(idx);
+        idx
+    }
+
+    /// Find a descendant node with matching `(rank, differentia)` by walking
+    /// the subtree rooted at `ancestor`. No search table — pure DFS.
+    pub fn find_descendant(
+        &self,
+        ancestor: u32,
+        rank: u64,
+        diff: u64,
+    ) -> Option<u32> {
+        // Direct children first
+        for &child in &self.children[ancestor as usize] {
+            if !self.is_leaf[child as usize]
+                && self.rank[child as usize] == rank
+                && self.differentia[child as usize] == diff
+            {
+                return Some(child);
+            }
+        }
+
+        // DFS into subtree
+        let mut stack: Vec<u32> = self.children[ancestor as usize]
+            .iter()
+            .copied()
+            .collect();
+        while let Some(node) = stack.pop() {
+            for &child in &self.children[node as usize] {
+                if !self.is_leaf[child as usize]
+                    && self.rank[child as usize] == rank
+                    && self.differentia[child as usize] == diff
+                {
+                    return Some(child);
+                }
+                stack.push(child);
+            }
+        }
+        None
+    }
+
+    /// Collapse unifurcation nodes (inner nodes with exactly one child).
+    pub fn collapse_unifurcations(&mut self) {
+        loop {
+            let mut did_collapse = false;
+            for i in 1..self.len() {
+                if self.parent[i] == NO_PARENT {
+                    continue;
+                }
+                if self.is_leaf[i] {
+                    continue;
+                }
+                if self.children[i].len() != 1 {
+                    continue;
+                }
+
+                let child = self.children[i][0];
+                let par = self.parent[i];
+
+                self.parent[child as usize] = par;
+
+                if par != NO_PARENT {
+                    let i32 = i as u32;
+                    if let Some(pos) =
+                        self.children[par as usize].iter().position(|&c| c == i32)
+                    {
+                        self.children[par as usize][pos] = child;
+                    }
+                }
+
+                self.children[i].clear();
+                self.parent[i] = NO_PARENT;
+                did_collapse = true;
+            }
+            if !did_collapse {
+                break;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

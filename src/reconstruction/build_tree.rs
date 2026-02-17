@@ -2,10 +2,13 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+#[cfg(feature = "rayon")]
+use rayon::prelude::*;
+
 use crate::column::HereditaryStratigraphicColumn;
 use crate::policies::StratumRetentionPolicy;
 
-use super::trie::Trie;
+use super::trie::{Trie, NaiveTrie};
 
 /// Tree reconstruction algorithm to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,8 +85,11 @@ pub fn build_tree<P: StratumRetentionPolicy>(
     }
 
     match algorithm {
-        TreeAlgorithm::ShortcutConsolidation | TreeAlgorithm::NaiveTrie => {
+        TreeAlgorithm::ShortcutConsolidation => {
             build_tree_trie(population, taxon_labels)
+        }
+        TreeAlgorithm::NaiveTrie => {
+            build_tree_naive(population, taxon_labels)
         }
     }
 }
@@ -104,6 +110,11 @@ fn build_tree_trie<P: StratumRetentionPolicy>(
 ) -> AlifeDataFrame {
     // Sort population indices by depth ascending (ties broken by index)
     let mut indices: Vec<usize> = (0..population.len()).collect();
+
+    #[cfg(feature = "rayon")]
+    indices.par_sort_by_key(|&i| population[i].get_num_strata_deposited());
+
+    #[cfg(not(feature = "rayon"))]
     indices.sort_by_key(|&i| population[i].get_num_strata_deposited());
 
     let mut trie = Trie::new();
@@ -139,6 +150,55 @@ fn build_tree_trie<P: StratumRetentionPolicy>(
     trie.collapse_unifurcations();
 
     trie_to_dataframe(&trie, taxon_labels)
+}
+
+/// Build a phylogenetic tree using a naive trie without search table.
+///
+/// Algorithm: same insertion logic as `build_tree_trie`, but uses DFS-based
+/// descendant lookup instead of a search table. O(N*D) per insertion where
+/// D is tree depth. Exponential worst case. Legacy fallback for compatibility.
+fn build_tree_naive<P: StratumRetentionPolicy>(
+    population: &[HereditaryStratigraphicColumn<P>],
+    taxon_labels: Option<&[String]>,
+) -> AlifeDataFrame {
+    let mut indices: Vec<usize> = (0..population.len()).collect();
+
+    #[cfg(feature = "rayon")]
+    indices.par_sort_by_key(|&i| population[i].get_num_strata_deposited());
+
+    #[cfg(not(feature = "rayon"))]
+    indices.sort_by_key(|&i| population[i].get_num_strata_deposited());
+
+    let mut trie = NaiveTrie::new();
+
+    for &pop_idx in &indices {
+        let col = &population[pop_idx];
+        let strata: Vec<_> = col.iter_retained_strata().collect();
+
+        if strata.is_empty() {
+            continue;
+        }
+
+        let mut current: u32 = 0;
+
+        for stratum in &strata {
+            let rank = stratum.rank;
+            let diff = stratum.differentia.value();
+
+            if let Some(existing) = trie.find_descendant(current, rank, diff) {
+                current = existing;
+            } else {
+                current = trie.add_node(current, rank, diff, false, None);
+            }
+        }
+
+        let leaf_rank = col.get_num_strata_deposited().saturating_sub(1);
+        trie.add_node(current, leaf_rank, 0, true, Some(pop_idx as u32));
+    }
+
+    trie.collapse_unifurcations();
+
+    naive_trie_to_dataframe(&trie, taxon_labels)
 }
 
 /// Convert the trie into an AlifeDataFrame.
@@ -189,6 +249,64 @@ fn trie_to_dataframe(
         df.origin_time.push(trie.rank[node as usize] as f64);
 
         // Taxon label
+        if let Some(taxon) = trie.taxon_id[node as usize] {
+            if let Some(labels) = taxon_labels {
+                if (taxon as usize) < labels.len() {
+                    df.taxon_label.push(labels[taxon as usize].clone());
+                } else {
+                    df.taxon_label.push(format!("taxon_{}", taxon));
+                }
+            } else {
+                df.taxon_label.push(format!("taxon_{}", taxon));
+            }
+        } else {
+            df.taxon_label.push(format!("inner_{}", id));
+        }
+    }
+
+    df
+}
+
+/// Convert a NaiveTrie into an AlifeDataFrame.
+fn naive_trie_to_dataframe(
+    trie: &NaiveTrie,
+    taxon_labels: Option<&[String]>,
+) -> AlifeDataFrame {
+    let mut df = AlifeDataFrame::new();
+
+    let mut reachable: Vec<u32> = Vec::new();
+    let mut queue: Vec<u32> = alloc::vec![0];
+    while let Some(node) = queue.pop() {
+        for &child in &trie.children[node as usize] {
+            reachable.push(child);
+            queue.push(child);
+        }
+    }
+
+    if reachable.is_empty() {
+        return df;
+    }
+
+    let mut node_to_id: Vec<Option<u32>> = alloc::vec![None; trie.len()];
+    for (i, &node) in reachable.iter().enumerate() {
+        node_to_id[node as usize] = Some(i as u32);
+    }
+
+    for &node in &reachable {
+        let id = node_to_id[node as usize].unwrap();
+        df.id.push(id);
+
+        let parent = trie.parent[node as usize];
+        if parent == 0 || parent == u32::MAX {
+            df.ancestor_list.push(Vec::new());
+        } else if let Some(parent_id) = node_to_id[parent as usize] {
+            df.ancestor_list.push(alloc::vec![parent_id]);
+        } else {
+            df.ancestor_list.push(Vec::new());
+        }
+
+        df.origin_time.push(trie.rank[node as usize] as f64);
+
         if let Some(taxon) = trie.taxon_id[node as usize] {
             if let Some(labels) = taxon_labels {
                 if (taxon as usize) < labels.len() {
@@ -421,9 +539,54 @@ mod tests {
         let df_sc = build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, None);
         let df_naive = build_tree(&pop, TreeAlgorithm::NaiveTrie, None);
 
-        // Both algorithms should produce same topology
+        // Both algorithms should produce identical topology
         assert_eq!(df_sc.len(), df_naive.len());
         assert_eq!(df_sc.origin_time, df_naive.origin_time);
+        assert_eq!(df_sc.ancestor_list, df_naive.ancestor_list);
+        assert_eq!(df_sc.taxon_label, df_naive.taxon_label);
+    }
+
+    #[test]
+    fn naive_trie_same_result_complex() {
+        // More complex case: 3 organisms with non-trivial branching
+        let col_a = make_column(
+            vec![(0, 10), (1, 20), (2, 30), (3, 40)],
+            4,
+        );
+        let col_b = make_column(
+            vec![(0, 10), (1, 99), (2, 88), (3, 77)],
+            4,
+        );
+        let col_c = make_column(
+            vec![(0, 10), (1, 20), (2, 30), (3, 55)],
+            4,
+        );
+
+        let pop = alloc::vec![col_a, col_b, col_c];
+        let df_sc = build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, None);
+        let df_naive = build_tree(&pop, TreeAlgorithm::NaiveTrie, None);
+
+        assert_eq!(df_sc.len(), df_naive.len());
+        assert_eq!(df_sc.origin_time, df_naive.origin_time);
+        assert_eq!(df_sc.ancestor_list, df_naive.ancestor_list);
+        assert_eq!(df_sc.taxon_label, df_naive.taxon_label);
+    }
+
+    #[test]
+    fn naive_trie_same_result_different_depths() {
+        let short = make_column(vec![(0, 10), (1, 20)], 2);
+        let long = make_column(
+            vec![(0, 10), (1, 20), (2, 30), (3, 40)],
+            4,
+        );
+
+        let pop = alloc::vec![short, long];
+        let df_sc = build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, None);
+        let df_naive = build_tree(&pop, TreeAlgorithm::NaiveTrie, None);
+
+        assert_eq!(df_sc.len(), df_naive.len());
+        assert_eq!(df_sc.origin_time, df_naive.origin_time);
+        assert_eq!(df_sc.ancestor_list, df_naive.ancestor_list);
     }
 
     #[test]

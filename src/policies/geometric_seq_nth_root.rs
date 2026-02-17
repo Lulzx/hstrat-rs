@@ -2,6 +2,7 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use super::r#trait::StratumRetentionPolicy;
+use crate::bit_floor;
 
 /// Retains strata using a geometric sequence based on the nth-root of the
 /// number of depositions.
@@ -30,7 +31,31 @@ impl GeometricSeqNthRootPolicy {
     }
 }
 
+/// Compute x^y using the platform math library when available (matching
+/// Python's behavior), falling back to libm for no_std.
+#[inline]
+fn powf_compat(x: f64, y: f64) -> f64 {
+    #[cfg(feature = "std")]
+    {
+        x.powf(y)
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        libm::pow(x, y)
+    }
+}
+
+/// Calculate the common ratio: `num_strata_deposited^(1/degree)`.
+/// Matches Python hstrat's `_calc_common_ratio`.
+fn calc_common_ratio(degree: u64, num_strata_deposited: u64) -> f64 {
+    powf_compat(num_strata_deposited as f64, 1.0 / degree as f64)
+}
+
 /// Compute the set of retained ranks for this policy.
+///
+/// Matches Python hstrat's `_get_retained_ranks` for `geom_seq_nth_root_algo`:
+/// For each power 1..=degree, computes a target recency, rank cutoff,
+/// backstop, and separation, then retains `range(backstop, n, sep)`.
 fn compute_retained_ranks(
     degree: u64,
     interspersal: u64,
@@ -39,77 +64,68 @@ fn compute_retained_ranks(
     if num_strata_deposited == 0 {
         return Vec::new();
     }
-    if num_strata_deposited == 1 {
-        return alloc::vec![0];
-    }
 
-    let newest_rank = num_strata_deposited - 1;
-    let n = num_strata_deposited as f64;
-
-    // Always retain the first `degree` strata and the newest rank.
+    let last_rank = num_strata_deposited - 1;
     let mut retained = alloc::collections::BTreeSet::new();
-    for r in 0..degree.min(num_strata_deposited) {
-        retained.insert(r);
-    }
-    retained.insert(newest_rank);
+    retained.insert(0u64);
+    retained.insert(last_rank);
 
-    if num_strata_deposited <= degree + 1 {
-        return retained.into_iter().collect();
-    }
-
-    // common_ratio = (n-1)^(1/degree)
-    let common_ratio = libm::pow(n - 1.0, 1.0 / degree as f64);
-
-    // Compute target recencies and corresponding target ranks.
-    // target_recencies[i] = common_ratio^(i+1) for i in 0..degree
-    let mut target_ranks = Vec::with_capacity(degree as usize + 1);
-    target_ranks.push(newest_rank); // recency 1 => newest_rank itself
+    let common_ratio = calc_common_ratio(degree, num_strata_deposited);
 
     for pow in 1..=degree {
-        let recency = libm::pow(common_ratio, pow as f64);
-        let recency_ceil = libm::ceil(recency) as u64;
-        let target = if recency_ceil > newest_rank {
-            0
+        // Compute common_ratio^pow using repeated multiplication instead of
+        // libm::pow to match Python's behavior. Python's ** operator for
+        // float**int uses repeated multiplication, which can be more precise
+        // than the log-exp approach of C's pow(). For example,
+        // `16^(1/3) * 16^(1/3) * 16^(1/3) = 16.0` exactly, while
+        // `pow(16^(1/3), 3.0) = 15.9999...` due to intermediate rounding.
+        let mut target_recency = 1.0f64;
+        for _ in 0..pow {
+            target_recency *= common_ratio;
+        }
+
+        // target_rank (Python: iter_target_ranks)
+        let recency_ceil = libm::ceil(target_recency) as u64;
+        let _target_rank = if recency_ceil >= num_strata_deposited {
+            0u64
         } else {
-            newest_rank - recency_ceil
+            num_strata_deposited - recency_ceil
         };
-        target_ranks.push(target);
-    }
 
-    // Sort target ranks ascending for interval computation.
-    target_ranks.sort_unstable();
-    target_ranks.dedup();
-
-    // For each pair of consecutive target ranks, intersperse retained strata.
-    for window in target_ranks.windows(2) {
-        let lo = window[0];
-        let hi = window[1];
-        if hi <= lo {
-            continue;
-        }
-        let span = hi - lo;
-        if interspersal == 0 || span == 0 {
-            retained.insert(lo);
-            retained.insert(hi);
-            continue;
-        }
-        // Place `interspersal` evenly-spaced strata in [lo, hi].
-        // Always include lo and hi, plus intermediate points.
-        let num_points = interspersal.min(span + 1);
-        if num_points <= 1 {
-            retained.insert(lo);
-            retained.insert(hi);
+        // rank_sep (Python: iter_rank_seps)
+        // Python: bit_floor(int(max(target_recency / interspersal, 1.0)))
+        let target_sep = if target_recency / interspersal as f64 > 1.0 {
+            target_recency / interspersal as f64
         } else {
-            for i in 0..num_points {
-                let rank = lo + (i * span) / (num_points - 1);
-                retained.insert(rank);
-            }
-        }
-    }
+            1.0
+        };
+        let retained_ranks_sep = bit_floor(target_sep as u64).max(1);
 
-    // Also retain the endpoints of the target list.
-    for &tr in &target_ranks {
-        retained.insert(tr);
+        // rank_cutoff (Python: iter_rank_cutoffs)
+        let extended_recency =
+            target_recency * (interspersal + 1) as f64 / interspersal as f64;
+        let extended_ceil = libm::ceil(extended_recency) as u64;
+        let rank_cutoff = if extended_ceil >= num_strata_deposited {
+            0u64
+        } else {
+            num_strata_deposited - extended_ceil
+        };
+
+        // backstop: round UP rank_cutoff to multiple of retained_ranks_sep
+        // Python: rank_cutoff - (rank_cutoff % -retained_ranks_sep)
+        // which is ceiling division to next multiple
+        let min_retained_rank = if rank_cutoff % retained_ranks_sep == 0 {
+            rank_cutoff
+        } else {
+            rank_cutoff + retained_ranks_sep - (rank_cutoff % retained_ranks_sep)
+        };
+
+        // Retain range(min_retained_rank, num_strata_deposited, retained_ranks_sep)
+        let mut r = min_retained_rank;
+        while r < num_strata_deposited {
+            retained.insert(r);
+            r += retained_ranks_sep;
+        }
     }
 
     retained.into_iter().collect()
@@ -289,13 +305,10 @@ mod tests {
     }
 
     #[test]
-    fn test_first_degree_strata_retained() {
+    fn test_rank_0_always_retained() {
         let policy = GeometricSeqNthRootPolicy::new(5, 2);
         let ranks: Vec<u64> = policy.iter_retained_ranks(100).collect();
-        // First `degree` ranks should be retained
-        for r in 0..5 {
-            assert!(ranks.contains(&r), "rank {r} should be retained");
-        }
+        assert!(ranks.contains(&0), "rank 0 should be retained");
     }
 
     #[test]
@@ -312,4 +325,5 @@ mod tests {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<GeometricSeqNthRootPolicy>();
     }
+
 }

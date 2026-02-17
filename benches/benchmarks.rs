@@ -114,10 +114,42 @@ fn bench_build_tree_10k(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_build_tree_100k(c: &mut Criterion) {
+    let mut group = c.benchmark_group("build_tree");
+    group.sample_size(10);
+
+    group.bench_function("100k_tips_fixed_res", |b| {
+        let mut ancestor = HereditaryStratigraphicColumn::with_seed(
+            FixedResolutionPolicy::new(10),
+            64,
+            42,
+        );
+        ancestor.deposit_strata(100);
+
+        let mut population = Vec::with_capacity(100_000);
+        for i in 0..100_000u64 {
+            let mut child = ancestor.clone_descendant();
+            child.deposit_strata(i % 50);
+            population.push(child);
+        }
+
+        b.iter(|| {
+            reconstruction::build_tree(
+                black_box(&population),
+                reconstruction::TreeAlgorithm::ShortcutConsolidation,
+                None,
+            );
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_deposit_strata_1m,
     bench_mrca_10k,
-    bench_build_tree_10k
+    bench_build_tree_10k,
+    bench_build_tree_100k
 );
 criterion_main!(benches);

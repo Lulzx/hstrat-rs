@@ -5,13 +5,13 @@ use crate::errors::{HstratError, Result};
 use crate::policies::StratumRetentionPolicy;
 
 /// Default byte width for encoding num_strata_deposited in packets.
-const DEFAULT_NUM_STRATA_DEPOSITED_BYTE_WIDTH: usize = 8;
+const DEFAULT_NUM_STRATA_DEPOSITED_BYTE_WIDTH: usize = 4;
 
 /// Serialize a column to a binary packet, compatible with Python hstrat's
 /// `col_to_packet()`.
 ///
 /// Packet format:
-/// 1. num_strata_deposited as big-endian unsigned int (8 bytes default)
+/// 1. num_strata_deposited as big-endian unsigned int (4 bytes default)
 /// 2. Packed differentiae at `bit_width` bits each, MSB-first, padded to byte
 pub fn col_to_packet<P: StratumRetentionPolicy>(
     column: &HereditaryStratigraphicColumn<P>,
@@ -478,7 +478,7 @@ mod tests {
 
     #[test]
     fn packet_too_short_errors() {
-        let result = col_from_packet(&[0u8; 4], PerfectResolutionPolicy, 64);
+        let result = col_from_packet(&[0u8; 3], PerfectResolutionPolicy, 64);
         assert!(result.is_err());
     }
 

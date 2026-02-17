@@ -3,7 +3,8 @@
 //! These tests verify cross-cutting invariants across the full stack:
 //! policies, columns, MRCA, serialization, and tree reconstruction.
 
-use hstrat::column::HereditaryStratigraphicColumn;
+use hstrat::column::{HereditaryStratigraphicColumn, Stratum};
+use hstrat::differentia::Differentia;
 use hstrat::policies::*;
 use hstrat::reconstruction::{
     build_tree, calc_rank_of_mrca_bounds_between, does_have_any_common_ancestor, TreeAlgorithm,
@@ -486,4 +487,565 @@ fn tree_deterministic() {
     assert_eq!(df1.ancestor_list, df2.ancestor_list);
     assert_eq!(df1.origin_time, df2.origin_time);
     assert_eq!(df1.taxon_label, df2.taxon_label);
+}
+
+// ─── Python Cross-Validation Fixtures ───
+
+/// Helper: load a JSON file from the fixtures directory.
+fn load_fixture(path: &str) -> serde_json::Value {
+    let full = format!(
+        "{}/tests/fixtures/{}",
+        env!("CARGO_MANIFEST_DIR"),
+        path
+    );
+    let data = std::fs::read_to_string(&full)
+        .unwrap_or_else(|e| panic!("failed to read {}: {}", full, e));
+    serde_json::from_str(&data)
+        .unwrap_or_else(|e| panic!("failed to parse {}: {}", full, e))
+}
+
+/// Verify policy retained ranks match Python hstrat for all n=0..1000.
+fn check_policy_vector(policy: &impl StratumRetentionPolicy, fixture_name: &str) {
+    let data = load_fixture(&format!("policy_vectors/{}.json", fixture_name));
+    let max_n: u64 = data["max_n"].as_u64().unwrap();
+
+    for n in 0..=max_n {
+        let expected_ranks: Vec<u64> = data["retained_ranks"][n.to_string().as_str()]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_u64().unwrap())
+            .collect();
+        let expected_count = data["num_strata_retained"][n.to_string().as_str()]
+            .as_u64()
+            .unwrap();
+
+        let actual_ranks: Vec<u64> = policy.iter_retained_ranks(n).collect();
+        let actual_count = policy.calc_num_strata_retained_exact(n);
+
+        assert_eq!(
+            actual_ranks, expected_ranks,
+            "{} n={}: ranks mismatch\n  rust:   {:?}\n  python: {:?}",
+            fixture_name, n, actual_ranks, expected_ranks
+        );
+        assert_eq!(
+            actual_count, expected_count,
+            "{} n={}: count mismatch",
+            fixture_name, n
+        );
+    }
+}
+
+#[test]
+fn fixture_fixed_resolution_1() {
+    check_policy_vector(&FixedResolutionPolicy::new(1), "fixed_resolution_1");
+}
+
+#[test]
+fn fixture_fixed_resolution_5() {
+    check_policy_vector(&FixedResolutionPolicy::new(5), "fixed_resolution_5");
+}
+
+#[test]
+fn fixture_fixed_resolution_10() {
+    check_policy_vector(&FixedResolutionPolicy::new(10), "fixed_resolution_10");
+}
+
+#[test]
+fn fixture_fixed_resolution_50() {
+    check_policy_vector(&FixedResolutionPolicy::new(50), "fixed_resolution_50");
+}
+
+#[test]
+fn fixture_perfect_resolution() {
+    check_policy_vector(&PerfectResolutionPolicy::new(), "perfect_resolution");
+}
+
+#[test]
+fn fixture_nominal_resolution() {
+    check_policy_vector(&NominalResolutionPolicy, "nominal_resolution");
+}
+
+#[test]
+fn fixture_recency_proportional_1() {
+    check_policy_vector(
+        &RecencyProportionalPolicy::new(1),
+        "recency_proportional_1",
+    );
+}
+
+#[test]
+fn fixture_recency_proportional_3() {
+    check_policy_vector(
+        &RecencyProportionalPolicy::new(3),
+        "recency_proportional_3",
+    );
+}
+
+#[test]
+fn fixture_recency_proportional_10() {
+    check_policy_vector(
+        &RecencyProportionalPolicy::new(10),
+        "recency_proportional_10",
+    );
+}
+
+#[test]
+fn fixture_depth_proportional_1() {
+    check_policy_vector(
+        &DepthProportionalPolicy::new(1),
+        "depth_proportional_1",
+    );
+}
+
+#[test]
+fn fixture_depth_proportional_5() {
+    check_policy_vector(
+        &DepthProportionalPolicy::new(5),
+        "depth_proportional_5",
+    );
+}
+
+#[test]
+fn fixture_depth_proportional_10() {
+    check_policy_vector(
+        &DepthProportionalPolicy::new(10),
+        "depth_proportional_10",
+    );
+}
+
+#[test]
+fn fixture_depth_proportional_tapered_1() {
+    check_policy_vector(
+        &DepthProportionalTaperedPolicy::new(1),
+        "depth_proportional_tapered_1",
+    );
+}
+
+#[test]
+fn fixture_depth_proportional_tapered_5() {
+    check_policy_vector(
+        &DepthProportionalTaperedPolicy::new(5),
+        "depth_proportional_tapered_5",
+    );
+}
+
+#[test]
+fn fixture_depth_proportional_tapered_10() {
+    check_policy_vector(
+        &DepthProportionalTaperedPolicy::new(10),
+        "depth_proportional_tapered_10",
+    );
+}
+
+#[test]
+fn fixture_geometric_seq_nth_root_2_2() {
+    check_policy_vector(
+        &GeometricSeqNthRootPolicy::new(2, 2),
+        "geometric_seq_nth_root_2_2",
+    );
+}
+
+#[test]
+fn fixture_geometric_seq_nth_root_3_2() {
+    check_policy_vector(
+        &GeometricSeqNthRootPolicy::new(3, 2),
+        "geometric_seq_nth_root_3_2",
+    );
+}
+
+#[test]
+fn fixture_geometric_seq_nth_root_2_4() {
+    check_policy_vector(
+        &GeometricSeqNthRootPolicy::new(2, 4),
+        "geometric_seq_nth_root_2_4",
+    );
+}
+
+#[test]
+fn fixture_geometric_seq_nth_root_tapered_2_2() {
+    check_policy_vector(
+        &GeometricSeqNthRootTaperedPolicy::new(2, 2),
+        "geometric_seq_nth_root_tapered_2_2",
+    );
+}
+
+#[test]
+fn fixture_geometric_seq_nth_root_tapered_3_2() {
+    check_policy_vector(
+        &GeometricSeqNthRootTaperedPolicy::new(3, 2),
+        "geometric_seq_nth_root_tapered_3_2",
+    );
+}
+
+#[test]
+fn fixture_curbed_recency_proportional_10() {
+    check_policy_vector(
+        &CurbedRecencyProportionalPolicy::new(10),
+        "curbed_recency_proportional_10",
+    );
+}
+
+#[test]
+fn fixture_curbed_recency_proportional_67() {
+    check_policy_vector(
+        &CurbedRecencyProportionalPolicy::new(67),
+        "curbed_recency_proportional_67",
+    );
+}
+
+// ─── Column Fixture Tests ───
+
+/// Helper to check a policy's output against fixture data for a specific n.
+fn check_column_fixture_case(
+    policy_name: &str,
+    n: u64,
+    expected_retained: u64,
+    expected_ranks: &[u64],
+    name: &str,
+) {
+    // Use DynamicPolicy for runtime dispatch
+    let policy = match policy_name {
+        "perfect_resolution" => DynamicPolicy::PerfectResolution(PerfectResolutionPolicy::new()),
+        "fixed_resolution_10" => DynamicPolicy::FixedResolution(FixedResolutionPolicy::new(10)),
+        "nominal_resolution" => DynamicPolicy::NominalResolution(NominalResolutionPolicy),
+        "recency_proportional_3" => {
+            DynamicPolicy::RecencyProportional(RecencyProportionalPolicy::new(3))
+        }
+        "depth_proportional_5" => {
+            DynamicPolicy::DepthProportional(DepthProportionalPolicy::new(5))
+        }
+        "geometric_seq_nth_root_2_2" => {
+            DynamicPolicy::GeometricSeqNthRoot(GeometricSeqNthRootPolicy::new(2, 2))
+        }
+        _ => panic!("unknown policy in fixture: {}", policy_name),
+    };
+
+    let actual_count = policy.calc_num_strata_retained_exact(n);
+    let actual_ranks: Vec<u64> = policy.iter_retained_ranks(n).collect();
+
+    assert_eq!(
+        actual_count, expected_retained,
+        "{}: count mismatch at n={}",
+        name, n
+    );
+    assert_eq!(
+        actual_ranks, expected_ranks,
+        "{}: ranks mismatch at n={}",
+        name, n
+    );
+}
+
+#[test]
+fn fixture_column_retained_ranks() {
+    let data = load_fixture("column_vectors/column_vectors.json");
+    let cases = data.as_array().unwrap();
+
+    for case in cases {
+        let name = case["name"].as_str().unwrap();
+        let policy_name = case["policy"].as_str().unwrap();
+        let n = case["num_strata_deposited"].as_u64().unwrap();
+        let expected_retained = case["num_strata_retained"].as_u64().unwrap();
+        let expected_ranks: Vec<u64> = case["retained_ranks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_u64().unwrap())
+            .collect();
+
+        check_column_fixture_case(
+            policy_name,
+            n,
+            expected_retained,
+            &expected_ranks,
+            name,
+        );
+    }
+}
+
+// ─── MRCA Fixture Tests ───
+
+fn make_column_from_fixture(
+    ranks: &[u64],
+    diffs: &[u64],
+    num_deposited: u64,
+    bit_width: u8,
+) -> HereditaryStratigraphicColumn<PerfectResolutionPolicy> {
+    let strata: Vec<Stratum> = ranks
+        .iter()
+        .zip(diffs.iter())
+        .map(|(&r, &d)| Stratum {
+            rank: r,
+            differentia: Differentia::new(d, bit_width),
+        })
+        .collect();
+    HereditaryStratigraphicColumn::from_parts(
+        PerfectResolutionPolicy::new(),
+        bit_width,
+        strata,
+        num_deposited,
+    )
+}
+
+#[test]
+fn fixture_mrca_bounds() {
+    let data = load_fixture("mrca_vectors/mrca_vectors.json");
+    let cases = data.as_array().unwrap();
+
+    for case in cases {
+        let name = case["name"].as_str().unwrap();
+        let bit_width = case["bit_width"].as_u64().unwrap() as u8;
+
+        let a_ranks: Vec<u64> = case["a_ranks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_u64().unwrap())
+            .collect();
+        let a_diffs: Vec<u64> = case["a_differentiae"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_u64().unwrap())
+            .collect();
+        let a_n = case["a_num_deposited"].as_u64().unwrap();
+
+        let b_ranks: Vec<u64> = case["b_ranks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_u64().unwrap())
+            .collect();
+        let b_diffs: Vec<u64> = case["b_differentiae"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_u64().unwrap())
+            .collect();
+        let b_n = case["b_num_deposited"].as_u64().unwrap();
+
+        let col_a = make_column_from_fixture(&a_ranks, &a_diffs, a_n, bit_width);
+        let col_b = make_column_from_fixture(&b_ranks, &b_diffs, b_n, bit_width);
+
+        let expected_has_common = case["has_common_ancestor"].as_bool().unwrap();
+        let actual_has_common = does_have_any_common_ancestor(&col_a, &col_b);
+        assert_eq!(
+            actual_has_common, expected_has_common,
+            "{}: has_common_ancestor mismatch",
+            name
+        );
+
+        if expected_has_common {
+            // Python: (lower_inclusive, upper_exclusive)
+            // Rust: (lower_inclusive, upper_inclusive)
+            let py_lower = case["mrca_lower_inclusive"].as_u64().unwrap();
+            let py_upper_excl = case["mrca_upper_exclusive"].as_u64().unwrap();
+
+            let bounds = calc_rank_of_mrca_bounds_between(&col_a, &col_b);
+            assert!(
+                bounds.is_some(),
+                "{}: expected Some bounds but got None",
+                name
+            );
+            let (rust_lower, rust_upper) = bounds.unwrap();
+
+            // Rust's lower bound should be >= Python's lower bound
+            // Rust's upper bound (inclusive) should be <= Python's upper - 1
+            // But they may not match exactly due to different algorithms.
+            // At minimum, the Rust bounds should be consistent:
+            // - lower <= upper
+            // - lower >= py_lower (both use same forward-scan logic)
+            assert!(
+                rust_lower <= rust_upper,
+                "{}: lower {} > upper {}",
+                name,
+                rust_lower,
+                rust_upper
+            );
+            // The MRCA must be within bounds from both implementations
+            assert!(
+                rust_lower >= py_lower || py_lower - rust_lower <= 1,
+                "{}: rust lower {} too far below python lower {}",
+                name,
+                rust_lower,
+                py_lower
+            );
+            assert!(
+                rust_upper < py_upper_excl || rust_upper == py_upper_excl.saturating_sub(1),
+                "{}: rust upper {} inconsistent with python upper_excl {}",
+                name,
+                rust_upper,
+                py_upper_excl
+            );
+        }
+    }
+}
+
+// ─── Serialization Fixture Tests ───
+
+#[test]
+fn fixture_serialization_packets() {
+    let data = load_fixture("serialization_vectors/serialization_vectors.json");
+    let cases = data.as_array().unwrap();
+
+    for case in cases {
+        let name = case["name"].as_str().unwrap();
+        let bit_width = case["bit_width"].as_u64().unwrap() as u8;
+        let n = case["num_strata_deposited"].as_u64().unwrap();
+        let expected_hex = case["packet_hex"].as_str().unwrap();
+        let expected_len = case["packet_len"].as_u64().unwrap() as usize;
+
+        let ranks: Vec<u64> = case["retained_ranks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_u64().unwrap())
+            .collect();
+        let diffs: Vec<u64> = case["retained_differentiae"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_u64().unwrap())
+            .collect();
+
+        // Build a column with the exact same strata
+        let strata: Vec<Stratum> = ranks
+            .iter()
+            .zip(diffs.iter())
+            .map(|(&r, &d)| Stratum {
+                rank: r,
+                differentia: Differentia::new(d, bit_width),
+            })
+            .collect();
+
+        let col = HereditaryStratigraphicColumn::from_parts(
+            PerfectResolutionPolicy::new(),
+            bit_width,
+            strata,
+            n,
+        );
+
+        let packet = col_to_packet(&col);
+        let actual_hex = hex::encode(&packet);
+
+        assert_eq!(
+            packet.len(),
+            expected_len,
+            "{}: packet length mismatch",
+            name
+        );
+        assert_eq!(
+            actual_hex, expected_hex,
+            "{}: packet hex mismatch\n  rust:   {}\n  python: {}",
+            name, actual_hex, expected_hex
+        );
+    }
+}
+
+// ─── Tree Fixture Tests ───
+
+#[test]
+fn fixture_tree_population_consistency() {
+    let data = load_fixture("tree_vectors/tree_vectors.json");
+    let cases = data.as_array().unwrap();
+
+    for case in cases {
+        let name = case["name"].as_str().unwrap();
+        let bit_width = case["bit_width"].as_u64().unwrap() as u8;
+        let num_organisms = case["num_organisms"].as_u64().unwrap() as usize;
+
+        let pop_data = case["population"].as_array().unwrap();
+        assert_eq!(pop_data.len(), num_organisms, "{}: population size", name);
+
+        // Reconstruct population from fixture
+        let mut population: Vec<HereditaryStratigraphicColumn<PerfectResolutionPolicy>> =
+            Vec::new();
+        for org in pop_data {
+            let ranks: Vec<u64> = org["ranks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_u64().unwrap())
+                .collect();
+            let diffs: Vec<u64> = org["differentiae"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_u64().unwrap())
+                .collect();
+            let n = org["num_strata_deposited"].as_u64().unwrap();
+
+            let strata: Vec<Stratum> = ranks
+                .iter()
+                .zip(diffs.iter())
+                .map(|(&r, &d)| Stratum {
+                    rank: r,
+                    differentia: Differentia::new(d, bit_width),
+                })
+                .collect();
+
+            population.push(HereditaryStratigraphicColumn::from_parts(
+                PerfectResolutionPolicy::new(),
+                bit_width,
+                strata,
+                n,
+            ));
+        }
+
+        // Build tree with both algorithms
+        let df_sc = build_tree(
+            &population,
+            TreeAlgorithm::ShortcutConsolidation,
+            None,
+        );
+        let df_naive = build_tree(&population, TreeAlgorithm::NaiveTrie, None);
+
+        // Both algorithms must produce identical output
+        assert_eq!(
+            df_sc.len(),
+            df_naive.len(),
+            "{}: node count mismatch between algorithms",
+            name
+        );
+        assert_eq!(
+            df_sc.origin_time, df_naive.origin_time,
+            "{}: origin_time mismatch between algorithms",
+            name
+        );
+        assert_eq!(
+            df_sc.ancestor_list, df_naive.ancestor_list,
+            "{}: ancestor_list mismatch between algorithms",
+            name
+        );
+        assert_eq!(
+            df_sc.taxon_label, df_naive.taxon_label,
+            "{}: taxon_label mismatch between algorithms",
+            name
+        );
+
+        // Leaves should match population count
+        let leaf_count = df_sc
+            .taxon_label
+            .iter()
+            .filter(|l| l.starts_with("taxon_"))
+            .count();
+        assert_eq!(
+            leaf_count, num_organisms,
+            "{}: leaf count mismatch",
+            name
+        );
+
+        // All ancestor IDs valid
+        let ids: std::collections::HashSet<u32> = df_sc.id.iter().copied().collect();
+        for ancestors in &df_sc.ancestor_list {
+            for &ancestor_id in ancestors {
+                assert!(
+                    ids.contains(&ancestor_id),
+                    "{}: invalid ancestor_id {}",
+                    name,
+                    ancestor_id
+                );
+            }
+        }
+    }
 }

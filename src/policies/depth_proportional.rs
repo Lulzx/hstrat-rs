@@ -22,41 +22,32 @@ impl DepthProportionalPolicy {
 }
 
 /// Calculate the provided uncertainty for the depth-proportional policy.
-fn calc_provided_uncertainty(resolution: u64, num_completed: u64) -> u64 {
-    let max_unc = num_completed / resolution;
+///
+/// The uncertainty is computed from the total `num_strata_deposited` and the
+/// `resolution`, matching Python hstrat's behavior where the step size is
+/// determined once for the whole column.
+fn calc_provided_uncertainty(resolution: u64, num_strata_deposited: u64) -> u64 {
+    let max_unc = num_strata_deposited / resolution;
     bit_floor(max_unc).max(1)
 }
 
 /// Compute the set of retained ranks for the depth-proportional policy.
+///
+/// Matches Python hstrat: computes a single step size from
+/// `num_strata_deposited`, then yields `range(0, num_strata_deposited, step)`
+/// plus the last rank if it doesn't fall on the grid.
 fn compute_retained_ranks(resolution: u64, num_strata_deposited: u64) -> Vec<u64> {
     if num_strata_deposited == 0 {
         return Vec::new();
     }
-    let newest_rank = num_strata_deposited - 1;
-    let mut retained = Vec::new();
 
-    let mut rank = 0u64;
-    while rank <= newest_rank {
-        retained.push(rank);
-        if rank == newest_rank {
-            break;
-        }
-        let num_completed = newest_rank - rank;
-        let step = calc_provided_uncertainty(resolution, num_completed);
-        let next = rank + step;
-        if next > newest_rank {
-            if *retained.last().unwrap() != newest_rank {
-                retained.push(newest_rank);
-            }
-            break;
-        }
-        rank = next;
-    }
+    let uncertainty = calc_provided_uncertainty(resolution, num_strata_deposited);
 
-    if let Some(&last) = retained.last() {
-        if last != newest_rank {
-            retained.push(newest_rank);
-        }
+    let mut retained: Vec<u64> = (0..num_strata_deposited).step_by(uncertainty as usize).collect();
+
+    let last_rank = num_strata_deposited - 1;
+    if last_rank > 0 && last_rank % uncertainty != 0 {
+        retained.push(last_rank);
     }
 
     retained
@@ -214,7 +205,9 @@ mod tests {
 
     #[test]
     fn test_calc_provided_uncertainty() {
-        // With resolution=3, divisor = 3
+        // calc_provided_uncertainty(resolution, num_strata_deposited)
+        // max_unc = num_strata_deposited / resolution
+        // result = bit_floor(max_unc).max(1)
         assert_eq!(calc_provided_uncertainty(3, 0), 1);
         assert_eq!(calc_provided_uncertainty(3, 1), 1);
         assert_eq!(calc_provided_uncertainty(3, 2), 1);
