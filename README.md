@@ -1,4 +1,4 @@
-# hstrat
+# hstrat-rs
 
 Rust implementation of hereditary stratigraphy for phylogenetic
 inference. Port of the Python
