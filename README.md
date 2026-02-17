@@ -13,7 +13,8 @@ without centralized bookkeeping.
 ## Features
 
 - 11 stratum retention policies (fixed resolution, depth proportional,
-  geometric, recency proportional, tapered variants, etc.)
+  geometric, recency proportional, stochastic, pseudostochastic,
+  tapered variants, curbed recency proportional, nominal, perfect)
 - `DynamicPolicy` enum for runtime policy dispatch
 - Pairwise MRCA (most recent common ancestor) bound estimation
 - Trie-based tree reconstruction with search-table acceleration
@@ -25,6 +26,9 @@ without centralized bookkeeping.
 - Python bindings via PyO3 (all policies, MRCA, tree building)
 - Cross-validated against Python hstrat: 22 policy configurations
   verified for n=0..1000, plus MRCA bounds and serialization packets
+- 282 tests (178 unit + 104 integration) with proptest property-based
+  testing, fixture-based cross-validation, and tests ported from the
+  Python hstrat test suite
 
 ## Performance
 
@@ -88,8 +92,16 @@ python -m venv .venv
 .venv/bin/python scripts/extract_test_vectors.py
 ```
 
-226 tests (178 unit + 48 integration) verify internal consistency
-and bit-for-bit compatibility with Python hstrat.
+282 tests (178 unit + 104 integration) verify internal consistency
+and bit-for-bit compatibility with Python hstrat. Coverage includes:
+
+- Policy invariants and dwindle-only guarantees for all 11 policies
+- `gen_drop_ranks` consistency checks
+- MRCA commutativity, cross-policy, multi-bit-width, and deep evolution tests
+- Packet and JSON serialization round-trips for all deterministic policies
+- Property-based testing (proptest) across column, serialization, and policy parameters
+- Tree reconstruction validation with both algorithms on varied topologies
+- Fixture-based cross-validation against Python hstrat reference output
 
 ## License
 
