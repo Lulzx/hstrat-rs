@@ -16,17 +16,22 @@ without centralized bookkeeping.
   geometric, recency proportional, stochastic, pseudostochastic,
   tapered variants, curbed recency proportional, nominal, perfect)
 - `DynamicPolicy` enum for runtime policy dispatch
-- Pairwise MRCA (most recent common ancestor) bound estimation
+- Pairwise and population-level MRCA bound estimation
+- Probabilistic MRCA inference (naive, maximum-likelihood, unbiased
+  estimators) with configurable priors (arbitrary, uniform, exponential)
+- Column juxtaposition: commonality/disparity iteration, spurious
+  collision probability, confidence-adjusted bounds
 - Trie-based tree reconstruction with search-table acceleration
   (two algorithms: shortcut-consolidation + naive DFS fallback)
-- Binary packet and JSON record serialization, round-trip compatible
-  with Python hstrat
+- Pluggable tree postprocessors for origin-time assignment
+- Binary packet, JSON record, and integer (sentry-bit u128)
+  serialization, round-trip compatible with Python hstrat
 - `no_std` compatible core (`alloc` only); optional `std`, `serde`,
   `pyo3`, `rayon` features
 - Python bindings via PyO3 (all policies, MRCA, tree building)
 - Cross-validated against Python hstrat: 22 policy configurations
   verified for n=0..1000, plus MRCA bounds and serialization packets
-- 282 tests (178 unit + 104 integration) with proptest property-based
+- 338 tests (229 unit + 109 integration) with proptest property-based
   testing, fixture-based cross-validation, and tests ported from the
   Python hstrat test suite
 
@@ -63,7 +68,7 @@ for _ in 0..50 {
 }
 
 // reconstruct the phylogenetic tree
-let tree = build_tree(&population, TreeAlgorithm::ShortcutConsolidation, None);
+let tree = build_tree(&population, TreeAlgorithm::ShortcutConsolidation, None, None);
 println!("{} nodes in reconstructed tree", tree.len());
 ```
 
@@ -92,7 +97,7 @@ python -m venv .venv
 .venv/bin/python scripts/extract_test_vectors.py
 ```
 
-282 tests (178 unit + 104 integration) verify internal consistency
+338 tests (229 unit + 109 integration) verify internal consistency
 and bit-for-bit compatibility with Python hstrat. Coverage includes:
 
 - Policy invariants and dwindle-only guarantees for all 11 policies
