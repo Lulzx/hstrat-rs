@@ -56,11 +56,7 @@ fn calc_common_ratio(degree: u64, num_strata_deposited: u64) -> f64 {
 /// Matches Python hstrat's `_get_retained_ranks` for `geom_seq_nth_root_algo`:
 /// For each power 1..=degree, computes a target recency, rank cutoff,
 /// backstop, and separation, then retains `range(backstop, n, sep)`.
-fn compute_retained_ranks(
-    degree: u64,
-    interspersal: u64,
-    num_strata_deposited: u64,
-) -> Vec<u64> {
+fn compute_retained_ranks(degree: u64, interspersal: u64, num_strata_deposited: u64) -> Vec<u64> {
     if num_strata_deposited == 0 {
         return Vec::new();
     }
@@ -86,11 +82,7 @@ fn compute_retained_ranks(
 
         // target_rank (Python: iter_target_ranks)
         let recency_ceil = libm::ceil(target_recency) as u64;
-        let _target_rank = if recency_ceil >= num_strata_deposited {
-            0u64
-        } else {
-            num_strata_deposited - recency_ceil
-        };
+        let _target_rank = num_strata_deposited.saturating_sub(recency_ceil);
 
         // rank_sep (Python: iter_rank_seps)
         // Python: bit_floor(int(max(target_recency / interspersal, 1.0)))
@@ -102,19 +94,14 @@ fn compute_retained_ranks(
         let retained_ranks_sep = bit_floor(target_sep as u64).max(1);
 
         // rank_cutoff (Python: iter_rank_cutoffs)
-        let extended_recency =
-            target_recency * (interspersal + 1) as f64 / interspersal as f64;
+        let extended_recency = target_recency * (interspersal + 1) as f64 / interspersal as f64;
         let extended_ceil = libm::ceil(extended_recency) as u64;
-        let rank_cutoff = if extended_ceil >= num_strata_deposited {
-            0u64
-        } else {
-            num_strata_deposited - extended_ceil
-        };
+        let rank_cutoff = num_strata_deposited.saturating_sub(extended_ceil);
 
         // backstop: round UP rank_cutoff to multiple of retained_ranks_sep
         // Python: rank_cutoff - (rank_cutoff % -retained_ranks_sep)
         // which is ceiling division to next multiple
-        let min_retained_rank = if rank_cutoff % retained_ranks_sep == 0 {
+        let min_retained_rank = if rank_cutoff.is_multiple_of(retained_ranks_sep) {
             rank_cutoff
         } else {
             rank_cutoff + retained_ranks_sep - (rank_cutoff % retained_ranks_sep)
@@ -132,19 +119,11 @@ fn compute_retained_ranks(
 }
 
 impl StratumRetentionPolicy for GeometricSeqNthRootPolicy {
-    fn gen_drop_ranks(
-        &self,
-        num_strata_deposited: u64,
-        retained_ranks: &[u64],
-    ) -> Vec<u64> {
+    fn gen_drop_ranks(&self, num_strata_deposited: u64, retained_ranks: &[u64]) -> Vec<u64> {
         if num_strata_deposited == 0 {
             return Vec::new();
         }
-        let keep = compute_retained_ranks(
-            self.degree,
-            self.interspersal,
-            num_strata_deposited,
-        );
+        let keep = compute_retained_ranks(self.degree, self.interspersal, num_strata_deposited);
         retained_ranks
             .iter()
             .copied()
@@ -152,37 +131,17 @@ impl StratumRetentionPolicy for GeometricSeqNthRootPolicy {
             .collect()
     }
 
-    fn iter_retained_ranks(
-        &self,
-        num_strata_deposited: u64,
-    ) -> Box<dyn Iterator<Item = u64> + '_> {
-        let ranks = compute_retained_ranks(
-            self.degree,
-            self.interspersal,
-            num_strata_deposited,
-        );
+    fn iter_retained_ranks(&self, num_strata_deposited: u64) -> Box<dyn Iterator<Item = u64> + '_> {
+        let ranks = compute_retained_ranks(self.degree, self.interspersal, num_strata_deposited);
         Box::new(ranks.into_iter())
     }
 
     fn calc_num_strata_retained_exact(&self, num_strata_deposited: u64) -> u64 {
-        compute_retained_ranks(
-            self.degree,
-            self.interspersal,
-            num_strata_deposited,
-        )
-        .len() as u64
+        compute_retained_ranks(self.degree, self.interspersal, num_strata_deposited).len() as u64
     }
 
-    fn calc_rank_at_column_index(
-        &self,
-        index: usize,
-        num_strata_deposited: u64,
-    ) -> u64 {
-        let ranks = compute_retained_ranks(
-            self.degree,
-            self.interspersal,
-            num_strata_deposited,
-        );
+    fn calc_rank_at_column_index(&self, index: usize, num_strata_deposited: u64) -> u64 {
+        let ranks = compute_retained_ranks(self.degree, self.interspersal, num_strata_deposited);
         ranks[index]
     }
 
@@ -190,19 +149,11 @@ impl StratumRetentionPolicy for GeometricSeqNthRootPolicy {
         if num_strata_deposited <= 1 {
             return 0;
         }
-        let ranks = compute_retained_ranks(
-            self.degree,
-            self.interspersal,
-            num_strata_deposited,
-        );
+        let ranks = compute_retained_ranks(self.degree, self.interspersal, num_strata_deposited);
         if ranks.len() <= 1 {
             return 0;
         }
-        ranks
-            .windows(2)
-            .map(|w| w[1] - w[0])
-            .max()
-            .unwrap_or(0)
+        ranks.windows(2).map(|w| w[1] - w[0]).max().unwrap_or(0)
     }
 
     fn algo_identifier(&self) -> &'static str {
@@ -325,5 +276,4 @@ mod tests {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<GeometricSeqNthRootPolicy>();
     }
-
 }

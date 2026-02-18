@@ -1,8 +1,8 @@
-use alloc::vec::Vec;
 use crate::column::{HereditaryStratigraphicColumn, Stratum};
 use crate::differentia::Differentia;
 use crate::errors::{HstratError, Result};
 use crate::policies::StratumRetentionPolicy;
+use alloc::vec::Vec;
 
 /// Default byte width for encoding num_strata_deposited in packets.
 const DEFAULT_NUM_STRATA_DEPOSITED_BYTE_WIDTH: usize = 4;
@@ -24,7 +24,24 @@ pub fn col_to_packet_with_options<P: StratumRetentionPolicy>(
     column: &HereditaryStratigraphicColumn<P>,
     num_strata_deposited_byte_width: usize,
 ) -> Vec<u8> {
+    assert!(
+        (1..=8).contains(&num_strata_deposited_byte_width),
+        "num_strata_deposited_byte_width must be in 1..=8, got {}",
+        num_strata_deposited_byte_width
+    );
+
     let n = column.get_num_strata_deposited();
+    let max_encodable_n = if num_strata_deposited_byte_width == 8 {
+        u64::MAX
+    } else {
+        (1u64 << (num_strata_deposited_byte_width * 8)) - 1
+    };
+    assert!(
+        n <= max_encodable_n,
+        "num_strata_deposited={} does not fit in {} bytes",
+        n,
+        num_strata_deposited_byte_width
+    );
     let bit_width = column.get_stratum_differentia_bit_width();
 
     // Header: num_strata_deposited in big-endian
@@ -66,6 +83,16 @@ pub fn col_from_packet_with_options<P: StratumRetentionPolicy>(
     differentia_bit_width: u8,
     num_strata_deposited_byte_width: usize,
 ) -> Result<HereditaryStratigraphicColumn<P>> {
+    if !(1..=8).contains(&num_strata_deposited_byte_width) {
+        return Err(HstratError::DeserializationError(alloc::format!(
+            "invalid header width {}, expected 1..=8",
+            num_strata_deposited_byte_width
+        )));
+    }
+    if !(1..=64).contains(&differentia_bit_width) {
+        return Err(HstratError::InvalidBitWidth(differentia_bit_width));
+    }
+
     if packet.len() < num_strata_deposited_byte_width {
         return Err(HstratError::DeserializationError(
             "packet too short for header".into(),
@@ -79,18 +106,14 @@ pub fn col_from_packet_with_options<P: StratumRetentionPolicy>(
     let num_strata_deposited = u64::from_be_bytes(n_bytes);
 
     // Calculate expected number of retained strata
-    let num_retained =
-        policy.calc_num_strata_retained_exact(num_strata_deposited) as usize;
+    let num_retained = policy.calc_num_strata_retained_exact(num_strata_deposited) as usize;
 
     // Unpack differentiae from remaining bytes
     let diff_bytes = &packet[num_strata_deposited_byte_width..];
-    let differentiae =
-        unpack_differentiae_bytes(diff_bytes, differentia_bit_width, num_retained)?;
+    let differentiae = unpack_differentiae_bytes(diff_bytes, differentia_bit_width, num_retained)?;
 
     // Reconstruct retained ranks using the policy
-    let retained_ranks: Vec<u64> = policy
-        .iter_retained_ranks(num_strata_deposited)
-        .collect();
+    let retained_ranks: Vec<u64> = policy.iter_retained_ranks(num_strata_deposited).collect();
 
     if retained_ranks.len() != differentiae.len() {
         return Err(HstratError::DeserializationError(alloc::format!(
@@ -103,7 +126,7 @@ pub fn col_from_packet_with_options<P: StratumRetentionPolicy>(
     // Build strata
     let strata: Vec<Stratum> = retained_ranks
         .into_iter()
-        .zip(differentiae.into_iter())
+        .zip(differentiae)
         .map(|(rank, diff_val)| Stratum {
             rank,
             differentia: Differentia::new(diff_val, differentia_bit_width),
@@ -125,7 +148,7 @@ fn pack_differentiae_bytes(differentiae: &[u64], bit_width: u8) -> Vec<u8> {
     }
 
     let total_bits = differentiae.len() * bit_width as usize;
-    let total_bytes = (total_bits + 7) / 8;
+    let total_bytes = total_bits.div_ceil(8);
     let mut result = alloc::vec![0u8; total_bytes];
 
     let mut bit_offset: usize = 0;
@@ -143,13 +166,9 @@ fn pack_differentiae_bytes(differentiae: &[u64], bit_width: u8) -> Vec<u8> {
 }
 
 /// Unpack differentia values from a byte array at the given bit width.
-fn unpack_differentiae_bytes(
-    bytes: &[u8],
-    bit_width: u8,
-    count: usize,
-) -> Result<Vec<u64>> {
+fn unpack_differentiae_bytes(bytes: &[u8], bit_width: u8, count: usize) -> Result<Vec<u64>> {
     let total_bits_needed = count * bit_width as usize;
-    let total_bytes_needed = (total_bits_needed + 7) / 8;
+    let total_bytes_needed = total_bits_needed.div_ceil(8);
 
     if bytes.len() < total_bytes_needed {
         return Err(HstratError::DeserializationError(alloc::format!(
@@ -207,35 +226,62 @@ pub fn col_from_records<P: StratumRetentionPolicy>(
     record: &serde_json::Value,
     policy: P,
 ) -> Result<HereditaryStratigraphicColumn<P>> {
-    let num_strata_deposited = record["num_strata_deposited"]
-        .as_u64()
-        .ok_or_else(|| HstratError::DeserializationError(
-            "missing or invalid num_strata_deposited".into(),
-        ))?;
+    if let Some(policy_name) = record.get("policy").and_then(|v| v.as_str()) {
+        if policy_name != policy.algo_identifier() {
+            return Err(HstratError::DeserializationError(alloc::format!(
+                "policy mismatch: record has '{}', expected '{}'",
+                policy_name,
+                policy.algo_identifier()
+            )));
+        }
+    }
 
-    let differentia_bit_width = record["differentia_bit_width"]
-        .as_u64()
-        .ok_or_else(|| HstratError::DeserializationError(
-            "missing or invalid differentia_bit_width".into(),
-        ))? as u8;
+    let num_strata_deposited = record["num_strata_deposited"].as_u64().ok_or_else(|| {
+        HstratError::DeserializationError("missing or invalid num_strata_deposited".into())
+    })?;
 
-    let differentiae: Vec<u64> = record["differentiae"]
-        .as_array()
-        .ok_or_else(|| HstratError::DeserializationError(
-            "missing or invalid differentiae array".into(),
-        ))?
-        .iter()
-        .map(|v| v.as_u64().unwrap_or(0))
-        .collect();
+    let differentia_bit_width_u64 = record["differentia_bit_width"].as_u64().ok_or_else(|| {
+        HstratError::DeserializationError("missing or invalid differentia_bit_width".into())
+    })?;
+    let differentia_bit_width = u8::try_from(differentia_bit_width_u64).map_err(|_| {
+        HstratError::DeserializationError(alloc::format!(
+            "differentia_bit_width {} does not fit in u8",
+            differentia_bit_width_u64
+        ))
+    })?;
+    if !(1..=64).contains(&differentia_bit_width) {
+        return Err(HstratError::InvalidBitWidth(differentia_bit_width));
+    }
 
-    let ranks: Vec<u64> = record["ranks"]
-        .as_array()
-        .ok_or_else(|| HstratError::DeserializationError(
-            "missing or invalid ranks array".into(),
-        ))?
-        .iter()
-        .map(|v| v.as_u64().unwrap_or(0))
-        .collect();
+    let differentiae_values = record["differentiae"].as_array().ok_or_else(|| {
+        HstratError::DeserializationError("missing or invalid differentiae array".into())
+    })?;
+    let mut differentiae = Vec::with_capacity(differentiae_values.len());
+    let differentia_mask = Differentia::mask(differentia_bit_width);
+    for (idx, v) in differentiae_values.iter().enumerate() {
+        let diff = v.as_u64().ok_or_else(|| {
+            HstratError::DeserializationError(alloc::format!("differentiae[{idx}] is not a u64"))
+        })?;
+        if diff & !differentia_mask != 0 {
+            return Err(HstratError::DeserializationError(alloc::format!(
+                "differentiae[{idx}]={} exceeds bit width {}",
+                diff,
+                differentia_bit_width
+            )));
+        }
+        differentiae.push(diff);
+    }
+
+    let rank_values = record["ranks"].as_array().ok_or_else(|| {
+        HstratError::DeserializationError("missing or invalid ranks array".into())
+    })?;
+    let mut ranks = Vec::with_capacity(rank_values.len());
+    for (idx, v) in rank_values.iter().enumerate() {
+        let rank = v.as_u64().ok_or_else(|| {
+            HstratError::DeserializationError(alloc::format!("ranks[{idx}] is not a u64"))
+        })?;
+        ranks.push(rank);
+    }
 
     if ranks.len() != differentiae.len() {
         return Err(HstratError::DeserializationError(alloc::format!(
@@ -244,10 +290,28 @@ pub fn col_from_records<P: StratumRetentionPolicy>(
             differentiae.len()
         )));
     }
+    if ranks.windows(2).any(|w| w[0] >= w[1]) {
+        return Err(HstratError::DeserializationError(
+            "ranks must be strictly ascending".into(),
+        ));
+    }
+    if ranks.iter().any(|&r| r >= num_strata_deposited) {
+        return Err(HstratError::DeserializationError(alloc::format!(
+            "rank out of bounds for num_strata_deposited={num_strata_deposited}"
+        )));
+    }
+    let expected_retained = policy.calc_num_strata_retained_exact(num_strata_deposited) as usize;
+    if expected_retained != ranks.len() {
+        return Err(HstratError::DeserializationError(alloc::format!(
+            "ranks count {} does not match policy expectation {}",
+            ranks.len(),
+            expected_retained
+        )));
+    }
 
     let strata: Vec<Stratum> = ranks
         .into_iter()
-        .zip(differentiae.into_iter())
+        .zip(differentiae)
         .map(|(rank, diff_val)| Stratum {
             rank,
             differentia: Differentia::new(diff_val, differentia_bit_width),
@@ -276,14 +340,17 @@ pub fn pop_from_records<P: StratumRetentionPolicy + Clone>(
     records: &[serde_json::Value],
     policy: P,
 ) -> Result<Vec<HereditaryStratigraphicColumn<P>>> {
-    records.iter().map(|r| col_from_records(r, policy.clone())).collect()
+    records
+        .iter()
+        .map(|r| col_from_records(r, policy.clone()))
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::policies::{
-        PerfectResolutionPolicy, FixedResolutionPolicy, NominalResolutionPolicy,
+        FixedResolutionPolicy, NominalResolutionPolicy, PerfectResolutionPolicy,
     };
 
     #[test]
@@ -341,20 +408,11 @@ mod tests {
 
     #[test]
     fn packet_round_trip() {
-        let mut col = HereditaryStratigraphicColumn::with_seed(
-            PerfectResolutionPolicy,
-            64,
-            42,
-        );
+        let mut col = HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy, 64, 42);
         col.deposit_strata(10);
 
         let packet = col_to_packet(&col);
-        let restored = col_from_packet(
-            &packet,
-            PerfectResolutionPolicy,
-            64,
-        )
-        .unwrap();
+        let restored = col_from_packet(&packet, PerfectResolutionPolicy, 64).unwrap();
 
         assert_eq!(
             col.get_num_strata_deposited(),
@@ -366,7 +424,10 @@ mod tests {
         );
 
         // Compare strata
-        for (a, b) in col.iter_retained_strata().zip(restored.iter_retained_strata()) {
+        for (a, b) in col
+            .iter_retained_strata()
+            .zip(restored.iter_retained_strata())
+        {
             assert_eq!(a.rank, b.rank);
             assert_eq!(a.differentia, b.differentia);
         }
@@ -374,20 +435,12 @@ mod tests {
 
     #[test]
     fn packet_round_trip_fixed_resolution() {
-        let mut col = HereditaryStratigraphicColumn::with_seed(
-            FixedResolutionPolicy::new(10),
-            8,
-            42,
-        );
+        let mut col =
+            HereditaryStratigraphicColumn::with_seed(FixedResolutionPolicy::new(10), 8, 42);
         col.deposit_strata(100);
 
         let packet = col_to_packet(&col);
-        let restored = col_from_packet(
-            &packet,
-            FixedResolutionPolicy::new(10),
-            8,
-        )
-        .unwrap();
+        let restored = col_from_packet(&packet, FixedResolutionPolicy::new(10), 8).unwrap();
 
         assert_eq!(
             col.get_num_strata_deposited(),
@@ -398,7 +451,10 @@ mod tests {
             restored.get_num_strata_retained()
         );
 
-        for (a, b) in col.iter_retained_strata().zip(restored.iter_retained_strata()) {
+        for (a, b) in col
+            .iter_retained_strata()
+            .zip(restored.iter_retained_strata())
+        {
             assert_eq!(a.rank, b.rank);
             assert_eq!(a.differentia, b.differentia);
         }
@@ -406,20 +462,11 @@ mod tests {
 
     #[test]
     fn packet_round_trip_nominal_resolution() {
-        let mut col = HereditaryStratigraphicColumn::with_seed(
-            NominalResolutionPolicy,
-            64,
-            123,
-        );
+        let mut col = HereditaryStratigraphicColumn::with_seed(NominalResolutionPolicy, 64, 123);
         col.deposit_strata(50);
 
         let packet = col_to_packet(&col);
-        let restored = col_from_packet(
-            &packet,
-            NominalResolutionPolicy,
-            64,
-        )
-        .unwrap();
+        let restored = col_from_packet(&packet, NominalResolutionPolicy, 64).unwrap();
 
         assert_eq!(
             col.get_num_strata_deposited(),
@@ -433,26 +480,20 @@ mod tests {
 
     #[test]
     fn packet_round_trip_1bit_differentia() {
-        let mut col = HereditaryStratigraphicColumn::with_seed(
-            PerfectResolutionPolicy,
-            1,
-            42,
-        );
+        let mut col = HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy, 1, 42);
         col.deposit_strata(20);
 
         let packet = col_to_packet(&col);
-        let restored = col_from_packet(
-            &packet,
-            PerfectResolutionPolicy,
-            1,
-        )
-        .unwrap();
+        let restored = col_from_packet(&packet, PerfectResolutionPolicy, 1).unwrap();
 
         assert_eq!(
             col.get_num_strata_deposited(),
             restored.get_num_strata_deposited()
         );
-        for (a, b) in col.iter_retained_strata().zip(restored.iter_retained_strata()) {
+        for (a, b) in col
+            .iter_retained_strata()
+            .zip(restored.iter_retained_strata())
+        {
             assert_eq!(a.rank, b.rank);
             assert_eq!(a.differentia, b.differentia);
         }
@@ -460,18 +501,9 @@ mod tests {
 
     #[test]
     fn packet_empty_column() {
-        let col = HereditaryStratigraphicColumn::with_seed(
-            PerfectResolutionPolicy,
-            64,
-            42,
-        );
+        let col = HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy, 64, 42);
         let packet = col_to_packet(&col);
-        let restored = col_from_packet(
-            &packet,
-            PerfectResolutionPolicy,
-            64,
-        )
-        .unwrap();
+        let restored = col_from_packet(&packet, PerfectResolutionPolicy, 64).unwrap();
         assert_eq!(restored.get_num_strata_deposited(), 0);
         assert_eq!(restored.get_num_strata_retained(), 0);
     }
@@ -482,14 +514,38 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[cfg(feature = "serde")]
     #[test]
-    fn records_round_trip() {
-        let mut col = HereditaryStratigraphicColumn::with_seed(
+    fn packet_invalid_header_width_errors() {
+        let packet = col_to_packet(&HereditaryStratigraphicColumn::with_seed(
             PerfectResolutionPolicy,
             64,
             42,
-        );
+        ));
+        assert!(col_from_packet_with_options(&packet, PerfectResolutionPolicy, 64, 0).is_err());
+        assert!(col_from_packet_with_options(&packet, PerfectResolutionPolicy, 64, 9).is_err());
+    }
+
+    #[test]
+    fn packet_invalid_bit_width_errors() {
+        let mut col = HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy, 64, 42);
+        col.deposit_strata(5);
+        let packet = col_to_packet(&col);
+        let result = col_from_packet(&packet, PerfectResolutionPolicy, 0);
+        assert!(matches!(result, Err(HstratError::InvalidBitWidth(0))));
+    }
+
+    #[test]
+    #[should_panic(expected = "does not fit")]
+    fn packet_header_width_overflow_panics() {
+        let mut col = HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy, 64, 42);
+        col.deposit_strata(300);
+        let _ = col_to_packet_with_options(&col, 1);
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn records_round_trip() {
+        let mut col = HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy, 64, 42);
         col.deposit_strata(10);
 
         let record = col_to_records(&col);
@@ -504,7 +560,10 @@ mod tests {
             restored.get_num_strata_retained()
         );
 
-        for (a, b) in col.iter_retained_strata().zip(restored.iter_retained_strata()) {
+        for (a, b) in col
+            .iter_retained_strata()
+            .zip(restored.iter_retained_strata())
+        {
             assert_eq!(a.rank, b.rank);
             assert_eq!(a.differentia, b.differentia);
         }
@@ -513,11 +572,7 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn records_contains_expected_fields() {
-        let mut col = HereditaryStratigraphicColumn::with_seed(
-            FixedResolutionPolicy::new(5),
-            8,
-            7,
-        );
+        let mut col = HereditaryStratigraphicColumn::with_seed(FixedResolutionPolicy::new(5), 8, 7);
         col.deposit_strata(20);
 
         let record = col_to_records(&col);
@@ -534,14 +589,33 @@ mod tests {
 
     #[cfg(feature = "serde")]
     #[test]
+    fn records_policy_mismatch_errors() {
+        let mut col = HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy, 64, 42);
+        col.deposit_strata(10);
+        let record = col_to_records(&col);
+        let result = col_from_records(&record, FixedResolutionPolicy::new(5));
+        assert!(result.is_err());
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn records_invalid_array_item_errors() {
+        let mut col = HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy, 8, 42);
+        col.deposit_strata(5);
+        let mut record = col_to_records(&col);
+
+        record["differentiae"][0] = serde_json::json!("not-a-number");
+        let result = col_from_records(&record, PerfectResolutionPolicy);
+        assert!(result.is_err());
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
     fn pop_records_round_trip() {
         let mut pop = Vec::new();
         for seed in 0..5u64 {
-            let mut col = HereditaryStratigraphicColumn::with_seed(
-                PerfectResolutionPolicy,
-                64,
-                seed,
-            );
+            let mut col =
+                HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy, 64, seed);
             col.deposit_strata(10);
             pop.push(col);
         }

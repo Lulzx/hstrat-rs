@@ -25,7 +25,10 @@ where
         return None;
     }
 
-    let bit_width = a.get_stratum_differentia_bit_width();
+    let bit_width = core::cmp::min(
+        a.get_stratum_differentia_bit_width(),
+        b.get_stratum_differentia_bit_width(),
+    );
 
     // Find common retained ranks via merge-scan (both are sorted ascending)
     let common_ranks = intersect_retained_ranks(a, b);
@@ -89,7 +92,10 @@ where
         return false;
     }
 
-    let bit_width = a.get_stratum_differentia_bit_width();
+    let bit_width = core::cmp::min(
+        a.get_stratum_differentia_bit_width(),
+        b.get_stratum_differentia_bit_width(),
+    );
 
     match (a.get_stratum_at_rank(0), b.get_stratum_at_rank(0)) {
         (Some(sa), Some(sb)) => sa.differentia.matches(sb.differentia, bit_width),
@@ -129,11 +135,7 @@ where
     let mut iter_a = a.iter_retained_ranks().peekable();
     let mut iter_b = b.iter_retained_ranks().peekable();
 
-    loop {
-        let ra: u64 = match iter_a.peek() {
-            Some(&r) => r,
-            None => break,
-        };
+    while let Some(&ra) = iter_a.peek() {
         let rb: u64 = match iter_b.peek() {
             Some(&r) => r,
             None => break,
@@ -184,11 +186,8 @@ mod tests {
 
     #[test]
     fn common_ancestor_same_column() {
-        let mut col = HereditaryStratigraphicColumn::with_seed(
-            PerfectResolutionPolicy::new(),
-            64,
-            42,
-        );
+        let mut col =
+            HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy::new(), 64, 42);
         col.deposit_strata(10);
         let child = col.clone_descendant();
         assert!(does_have_any_common_ancestor(&col, &child));
@@ -196,26 +195,17 @@ mod tests {
 
     #[test]
     fn no_common_ancestor_empty_columns() {
-        let col_a = HereditaryStratigraphicColumn::with_seed(
-            PerfectResolutionPolicy::new(),
-            64,
-            42,
-        );
-        let col_b = HereditaryStratigraphicColumn::with_seed(
-            PerfectResolutionPolicy::new(),
-            64,
-            42,
-        );
+        let col_a =
+            HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy::new(), 64, 42);
+        let col_b =
+            HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy::new(), 64, 42);
         assert!(!does_have_any_common_ancestor(&col_a, &col_b));
     }
 
     #[test]
     fn mrca_bounds_parent_child_perfect() {
-        let mut parent = HereditaryStratigraphicColumn::with_seed(
-            PerfectResolutionPolicy::new(),
-            64,
-            42,
-        );
+        let mut parent =
+            HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy::new(), 64, 42);
         parent.deposit_strata(10);
         let mut child = parent.clone_descendant();
         child.deposit_strata(5);
@@ -233,14 +223,10 @@ mod tests {
     #[test]
     fn mrca_bounds_known_divergence() {
         // Two siblings diverging at rank 3
-        let col_a = make_column_from_strata(
-            vec![(0, 100), (1, 200), (2, 300), (3, 400), (4, 500)],
-            5,
-        );
-        let col_b = make_column_from_strata(
-            vec![(0, 100), (1, 200), (2, 300), (3, 999), (4, 888)],
-            5,
-        );
+        let col_a =
+            make_column_from_strata(vec![(0, 100), (1, 200), (2, 300), (3, 400), (4, 500)], 5);
+        let col_b =
+            make_column_from_strata(vec![(0, 100), (1, 200), (2, 300), (3, 999), (4, 888)], 5);
 
         assert!(does_have_any_common_ancestor(&col_a, &col_b));
         let (lower, upper) = calc_rank_of_mrca_bounds_between(&col_a, &col_b).unwrap();
@@ -252,14 +238,8 @@ mod tests {
 
     #[test]
     fn mrca_bounds_all_match() {
-        let col_a = make_column_from_strata(
-            vec![(0, 100), (1, 200), (2, 300)],
-            3,
-        );
-        let col_b = make_column_from_strata(
-            vec![(0, 100), (1, 200), (2, 300)],
-            5,
-        );
+        let col_a = make_column_from_strata(vec![(0, 100), (1, 200), (2, 300)], 3);
+        let col_b = make_column_from_strata(vec![(0, 100), (1, 200), (2, 300)], 5);
 
         let (lower, upper) = calc_rank_of_mrca_bounds_between(&col_a, &col_b).unwrap();
         // All common ranks match, MRCA >= 2, upper = min(2, 4) = 2
@@ -270,14 +250,10 @@ mod tests {
     #[test]
     fn mrca_bounds_sparse_ranks() {
         // Simulate columns with different retention
-        let col_a = make_column_from_strata(
-            vec![(0, 10), (5, 20), (10, 30), (15, 40), (20, 50)],
-            21,
-        );
-        let col_b = make_column_from_strata(
-            vec![(0, 10), (5, 20), (10, 30), (15, 99), (20, 88)],
-            21,
-        );
+        let col_a =
+            make_column_from_strata(vec![(0, 10), (5, 20), (10, 30), (15, 40), (20, 50)], 21);
+        let col_b =
+            make_column_from_strata(vec![(0, 10), (5, 20), (10, 30), (15, 99), (20, 88)], 21);
 
         let (lower, upper) = calc_rank_of_mrca_bounds_between(&col_a, &col_b).unwrap();
         // Match at 0,5,10 — mismatch at 15
@@ -298,17 +274,12 @@ mod tests {
 
     #[test]
     fn ranks_since_mrca() {
-        let col_a = make_column_from_strata(
-            vec![(0, 100), (1, 200), (2, 300), (3, 400), (4, 500)],
-            5,
-        );
-        let col_b = make_column_from_strata(
-            vec![(0, 100), (1, 200), (2, 300), (3, 999), (4, 888)],
-            5,
-        );
+        let col_a =
+            make_column_from_strata(vec![(0, 100), (1, 200), (2, 300), (3, 400), (4, 500)], 5);
+        let col_b =
+            make_column_from_strata(vec![(0, 100), (1, 200), (2, 300), (3, 999), (4, 888)], 5);
 
-        let (since_a, since_b) =
-            calc_ranks_since_mrca_bounds_between(&col_a, &col_b).unwrap();
+        let (since_a, since_b) = calc_ranks_since_mrca_bounds_between(&col_a, &col_b).unwrap();
         // MRCA at rank 2, both newest at rank 4
         assert_eq!(since_a, 2); // 4 - 2
         assert_eq!(since_b, 2); // 4 - 2
@@ -316,17 +287,13 @@ mod tests {
 
     #[test]
     fn ranks_since_mrca_asymmetric() {
-        let col_a = make_column_from_strata(
-            vec![(0, 100), (1, 200), (2, 300), (3, 400)],
-            4,
-        );
+        let col_a = make_column_from_strata(vec![(0, 100), (1, 200), (2, 300), (3, 400)], 4);
         let col_b = make_column_from_strata(
             vec![(0, 100), (1, 200), (2, 300), (3, 999), (4, 888), (5, 777)],
             6,
         );
 
-        let (since_a, since_b) =
-            calc_ranks_since_mrca_bounds_between(&col_a, &col_b).unwrap();
+        let (since_a, since_b) = calc_ranks_since_mrca_bounds_between(&col_a, &col_b).unwrap();
         // MRCA at rank 2, a newest = 3, b newest = 5
         assert_eq!(since_a, 1); // 3 - 2
         assert_eq!(since_b, 3); // 5 - 2
@@ -334,35 +301,100 @@ mod tests {
 
     #[test]
     fn intersect_ranks_basic() {
-        let col_a = make_column_from_strata(
-            vec![(0, 1), (2, 2), (4, 3), (6, 4)],
-            7,
-        );
-        let col_b = make_column_from_strata(
-            vec![(0, 1), (3, 2), (4, 3), (5, 4), (6, 5)],
-            7,
-        );
+        let col_a = make_column_from_strata(vec![(0, 1), (2, 2), (4, 3), (6, 4)], 7);
+        let col_b = make_column_from_strata(vec![(0, 1), (3, 2), (4, 3), (5, 4), (6, 5)], 7);
 
         let common = intersect_retained_ranks(&col_a, &col_b);
         assert_eq!(common, vec![0, 4, 6]);
     }
 
     #[test]
+    fn common_ancestor_mixed_bit_width_is_symmetric() {
+        let a = HereditaryStratigraphicColumn::from_parts(
+            PerfectResolutionPolicy::new(),
+            64,
+            vec![
+                Stratum {
+                    rank: 0,
+                    differentia: Differentia::new(0xABCD, 64),
+                },
+                Stratum {
+                    rank: 1,
+                    differentia: Differentia::new(0x1234, 64),
+                },
+            ],
+            2,
+        );
+        let b = HereditaryStratigraphicColumn::from_parts(
+            PerfectResolutionPolicy::new(),
+            8,
+            vec![
+                Stratum {
+                    rank: 0,
+                    differentia: Differentia::new(0xCD, 8),
+                },
+                Stratum {
+                    rank: 1,
+                    differentia: Differentia::new(0x99, 8),
+                },
+            ],
+            2,
+        );
+
+        assert!(does_have_any_common_ancestor(&a, &b));
+        assert!(does_have_any_common_ancestor(&b, &a));
+        assert_eq!(
+            calc_rank_of_mrca_bounds_between(&a, &b),
+            calc_rank_of_mrca_bounds_between(&b, &a),
+        );
+    }
+
+    #[test]
     fn mrca_with_fixed_resolution() {
         // Two columns using FixedResolutionPolicy with resolution=5
         let strata_a: Vec<Stratum> = vec![
-            Stratum { rank: 0, differentia: Differentia::new(42, 64) },
-            Stratum { rank: 5, differentia: Differentia::new(100, 64) },
-            Stratum { rank: 10, differentia: Differentia::new(200, 64) },
-            Stratum { rank: 15, differentia: Differentia::new(300, 64) },
-            Stratum { rank: 20, differentia: Differentia::new(400, 64) },
+            Stratum {
+                rank: 0,
+                differentia: Differentia::new(42, 64),
+            },
+            Stratum {
+                rank: 5,
+                differentia: Differentia::new(100, 64),
+            },
+            Stratum {
+                rank: 10,
+                differentia: Differentia::new(200, 64),
+            },
+            Stratum {
+                rank: 15,
+                differentia: Differentia::new(300, 64),
+            },
+            Stratum {
+                rank: 20,
+                differentia: Differentia::new(400, 64),
+            },
         ];
         let strata_b: Vec<Stratum> = vec![
-            Stratum { rank: 0, differentia: Differentia::new(42, 64) },
-            Stratum { rank: 5, differentia: Differentia::new(100, 64) },
-            Stratum { rank: 10, differentia: Differentia::new(200, 64) },
-            Stratum { rank: 15, differentia: Differentia::new(999, 64) },
-            Stratum { rank: 20, differentia: Differentia::new(888, 64) },
+            Stratum {
+                rank: 0,
+                differentia: Differentia::new(42, 64),
+            },
+            Stratum {
+                rank: 5,
+                differentia: Differentia::new(100, 64),
+            },
+            Stratum {
+                rank: 10,
+                differentia: Differentia::new(200, 64),
+            },
+            Stratum {
+                rank: 15,
+                differentia: Differentia::new(999, 64),
+            },
+            Stratum {
+                rank: 20,
+                differentia: Differentia::new(888, 64),
+            },
         ];
         let col_a = HereditaryStratigraphicColumn::from_parts(
             FixedResolutionPolicy::new(5),

@@ -30,17 +30,12 @@ impl PseudostochasticPolicy {
     fn should_retain(&self, rank: u64) -> bool {
         rank.wrapping_mul(self.hash_salt)
             .wrapping_add(self.hash_salt)
-            % 2
-            == 0
+            .is_multiple_of(2)
     }
 }
 
 impl StratumRetentionPolicy for PseudostochasticPolicy {
-    fn gen_drop_ranks(
-        &self,
-        num_strata_deposited: u64,
-        retained_ranks: &[u64],
-    ) -> Vec<u64> {
+    fn gen_drop_ranks(&self, num_strata_deposited: u64, retained_ranks: &[u64]) -> Vec<u64> {
         if num_strata_deposited <= 2 {
             return Vec::new();
         }
@@ -66,10 +61,7 @@ impl StratumRetentionPolicy for PseudostochasticPolicy {
         }
     }
 
-    fn iter_retained_ranks(
-        &self,
-        num_strata_deposited: u64,
-    ) -> Box<dyn Iterator<Item = u64> + '_> {
+    fn iter_retained_ranks(&self, num_strata_deposited: u64) -> Box<dyn Iterator<Item = u64> + '_> {
         if num_strata_deposited == 0 {
             return Box::new(core::iter::empty());
         }
@@ -88,9 +80,7 @@ impl StratumRetentionPolicy for PseudostochasticPolicy {
 
             if dep >= 2 {
                 let second_most_recent = dep - 1;
-                if second_most_recent != 0
-                    && !self.should_retain(second_most_recent)
-                {
+                if second_most_recent != 0 && !self.should_retain(second_most_recent) {
                     retained.retain(|&r| r != second_most_recent);
                 }
             }
@@ -113,13 +103,8 @@ impl StratumRetentionPolicy for PseudostochasticPolicy {
         self.iter_retained_ranks(num_strata_deposited).count() as u64
     }
 
-    fn calc_rank_at_column_index(
-        &self,
-        index: usize,
-        num_strata_deposited: u64,
-    ) -> u64 {
-        let ranks: Vec<u64> =
-            self.iter_retained_ranks(num_strata_deposited).collect();
+    fn calc_rank_at_column_index(&self, index: usize, num_strata_deposited: u64) -> u64 {
+        let ranks: Vec<u64> = self.iter_retained_ranks(num_strata_deposited).collect();
         ranks[index]
     }
 
@@ -127,16 +112,11 @@ impl StratumRetentionPolicy for PseudostochasticPolicy {
         if num_strata_deposited <= 1 {
             return 0;
         }
-        let retained: Vec<u64> =
-            self.iter_retained_ranks(num_strata_deposited).collect();
+        let retained: Vec<u64> = self.iter_retained_ranks(num_strata_deposited).collect();
         if retained.len() <= 1 {
             return num_strata_deposited.saturating_sub(1);
         }
-        retained
-            .windows(2)
-            .map(|w| w[1] - w[0])
-            .max()
-            .unwrap_or(0)
+        retained.windows(2).map(|w| w[1] - w[0]).max().unwrap_or(0)
     }
 
     fn algo_identifier(&self) -> &'static str {
@@ -163,10 +143,7 @@ mod tests {
     fn test_one_deposited() {
         let policy = PseudostochasticPolicy { hash_salt: 42 };
         assert_eq!(policy.calc_num_strata_retained_exact(1), 1);
-        assert_eq!(
-            policy.iter_retained_ranks(1).collect::<Vec<_>>(),
-            vec![0],
-        );
+        assert_eq!(policy.iter_retained_ranks(1).collect::<Vec<_>>(), vec![0],);
     }
 
     #[test]

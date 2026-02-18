@@ -20,6 +20,12 @@ pub struct Trie {
     search_table: BTreeMap<u64, BTreeMap<u64, Vec<u32>>>,
 }
 
+impl Default for Trie {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Trie {
     /// Create a new trie with a virtual root node.
     pub fn new() -> Self {
@@ -37,6 +43,11 @@ impl Trie {
     /// Number of nodes (including virtual root and orphaned nodes).
     pub fn len(&self) -> usize {
         self.parent.len()
+    }
+
+    /// Whether the trie has no nodes.
+    pub fn is_empty(&self) -> bool {
+        self.parent.is_empty()
     }
 
     /// Add a node as a child of `parent_idx`.
@@ -63,9 +74,9 @@ impl Trie {
         if !is_leaf {
             self.search_table
                 .entry(rank)
-                .or_insert_with(BTreeMap::new)
+                .or_default()
                 .entry(diff)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(idx);
         }
 
@@ -77,12 +88,7 @@ impl Trie {
     ///
     /// Fast path: checks direct children first (O(children_count)).
     /// Slow path: uses search table + ancestry walk (O(candidates * depth)).
-    pub fn find_descendant(
-        &self,
-        ancestor: u32,
-        rank: u64,
-        diff: u64,
-    ) -> Option<u32> {
+    pub fn find_descendant(&self, ancestor: u32, rank: u64, diff: u64) -> Option<u32> {
         // Fast path: direct child
         for &child in &self.children[ancestor as usize] {
             if !self.is_leaf[child as usize]
@@ -144,9 +150,7 @@ impl Trie {
                 // Update parent's children: replace i with child
                 if par != NO_PARENT {
                     let i32 = i as u32;
-                    if let Some(pos) =
-                        self.children[par as usize].iter().position(|&c| c == i32)
-                    {
+                    if let Some(pos) = self.children[par as usize].iter().position(|&c| c == i32) {
                         self.children[par as usize][pos] = child;
                     }
                 }
@@ -184,6 +188,12 @@ pub struct NaiveTrie {
     pub children: Vec<Vec<u32>>,
 }
 
+impl Default for NaiveTrie {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NaiveTrie {
     /// Create a new naive trie with a virtual root node.
     pub fn new() -> Self {
@@ -200,6 +210,11 @@ impl NaiveTrie {
     /// Number of nodes (including virtual root and orphaned nodes).
     pub fn len(&self) -> usize {
         self.parent.len()
+    }
+
+    /// Whether the trie has no nodes.
+    pub fn is_empty(&self) -> bool {
+        self.parent.is_empty()
     }
 
     /// Add a node as a child of `parent_idx`.
@@ -224,12 +239,7 @@ impl NaiveTrie {
 
     /// Find a descendant node with matching `(rank, differentia)` by walking
     /// the subtree rooted at `ancestor`. No search table — pure DFS.
-    pub fn find_descendant(
-        &self,
-        ancestor: u32,
-        rank: u64,
-        diff: u64,
-    ) -> Option<u32> {
+    pub fn find_descendant(&self, ancestor: u32, rank: u64, diff: u64) -> Option<u32> {
         // Direct children first
         for &child in &self.children[ancestor as usize] {
             if !self.is_leaf[child as usize]
@@ -241,10 +251,7 @@ impl NaiveTrie {
         }
 
         // DFS into subtree
-        let mut stack: Vec<u32> = self.children[ancestor as usize]
-            .iter()
-            .copied()
-            .collect();
+        let mut stack: Vec<u32> = self.children[ancestor as usize].to_vec();
         while let Some(node) = stack.pop() {
             for &child in &self.children[node as usize] {
                 if !self.is_leaf[child as usize]
@@ -281,9 +288,7 @@ impl NaiveTrie {
 
                 if par != NO_PARENT {
                     let i32 = i as u32;
-                    if let Some(pos) =
-                        self.children[par as usize].iter().position(|&c| c == i32)
-                    {
+                    if let Some(pos) = self.children[par as usize].iter().position(|&c| c == i32) {
                         self.children[par as usize][pos] = child;
                     }
                 }
@@ -356,7 +361,7 @@ mod tests {
     fn find_descendant_skips_leaves() {
         let mut trie = Trie::new();
         trie.add_node(0, 0, 42, true, Some(0)); // leaf
-        // Should not find the leaf
+                                                // Should not find the leaf
         assert_eq!(trie.find_descendant(0, 0, 42), None);
     }
 

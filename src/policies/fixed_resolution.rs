@@ -21,11 +21,7 @@ impl FixedResolutionPolicy {
 }
 
 impl StratumRetentionPolicy for FixedResolutionPolicy {
-    fn gen_drop_ranks(
-        &self,
-        num_strata_deposited: u64,
-        retained_ranks: &[u64],
-    ) -> Vec<u64> {
+    fn gen_drop_ranks(&self, num_strata_deposited: u64, retained_ranks: &[u64]) -> Vec<u64> {
         if num_strata_deposited == 0 {
             return Vec::new();
         }
@@ -33,16 +29,11 @@ impl StratumRetentionPolicy for FixedResolutionPolicy {
         retained_ranks
             .iter()
             .copied()
-            .filter(|&rank| {
-                rank % self.resolution != 0 && rank != newest_rank
-            })
+            .filter(|&rank| rank % self.resolution != 0 && rank != newest_rank)
             .collect()
     }
 
-    fn iter_retained_ranks(
-        &self,
-        num_strata_deposited: u64,
-    ) -> Box<dyn Iterator<Item = u64> + '_> {
+    fn iter_retained_ranks(&self, num_strata_deposited: u64) -> Box<dyn Iterator<Item = u64> + '_> {
         if num_strata_deposited == 0 {
             return Box::new(core::iter::empty());
         }
@@ -50,17 +41,8 @@ impl StratumRetentionPolicy for FixedResolutionPolicy {
         let resolution = self.resolution;
         let aligned_iter = (0..=newest_rank).step_by(resolution as usize);
         // If newest_rank is not aligned, append it
-        let needs_extra = newest_rank % resolution != 0;
-        Box::new(
-            aligned_iter.chain(
-                if needs_extra {
-                    Some(newest_rank)
-                } else {
-                    None
-                }
-                .into_iter(),
-            ),
-        )
+        let needs_extra = !newest_rank.is_multiple_of(resolution);
+        Box::new(aligned_iter.chain(if needs_extra { Some(newest_rank) } else { None }))
     }
 
     fn calc_num_strata_retained_exact(&self, num_strata_deposited: u64) -> u64 {
@@ -69,7 +51,7 @@ impl StratumRetentionPolicy for FixedResolutionPolicy {
         }
         let newest_rank = num_strata_deposited - 1;
         let aligned_count = newest_rank / self.resolution + 1;
-        let extra = if newest_rank % self.resolution != 0 {
+        let extra = if !newest_rank.is_multiple_of(self.resolution) {
             1
         } else {
             0
@@ -77,11 +59,11 @@ impl StratumRetentionPolicy for FixedResolutionPolicy {
         aligned_count + extra
     }
 
-    fn calc_rank_at_column_index(
-        &self,
-        index: usize,
-        num_strata_deposited: u64,
-    ) -> u64 {
+    fn fast_drop_singleton_is_second_most_recent(&self) -> bool {
+        true
+    }
+
+    fn calc_rank_at_column_index(&self, index: usize, num_strata_deposited: u64) -> u64 {
         let ranks: Vec<u64> = self.iter_retained_ranks(num_strata_deposited).collect();
         ranks[index]
     }

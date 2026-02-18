@@ -2,20 +2,20 @@
 
 extern crate alloc;
 
+pub mod column;
 pub mod differentia;
 pub mod errors;
 pub mod policies;
-pub mod column;
 pub mod reconstruction;
 pub mod serialization;
 
 #[cfg(feature = "pyo3")]
 pub mod pyo3_bindings;
 
-pub use differentia::Differentia;
-pub use errors::HstratError;
 pub use column::HereditaryStratigraphicColumn;
 pub use column::Stratum;
+pub use differentia::Differentia;
+pub use errors::HstratError;
 
 /// Largest power of 2 less than or equal to `x`. Returns 0 for input 0.
 /// Must match Python hstrat's `_bit_floor` exactly.

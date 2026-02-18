@@ -73,14 +73,8 @@ fn calc_target_recency(degree: u64, pow: u64, num_strata_deposited: u64) -> f64 
 
 /// `bit_floor(int(max(recency / interspersal, 1.0)))` -- Python's
 /// `_calc_rank_sep`.
-fn calc_rank_sep(
-    degree: u64,
-    interspersal: u64,
-    pow: u64,
-    num_strata_deposited: u64,
-) -> u64 {
-    let target_recency =
-        calc_target_recency(degree, pow, num_strata_deposited);
+fn calc_rank_sep(degree: u64, interspersal: u64, pow: u64, num_strata_deposited: u64) -> u64 {
+    let target_recency = calc_target_recency(degree, pow, num_strata_deposited);
     let target_sep = if target_recency / interspersal as f64 > 1.0 {
         target_recency / interspersal as f64
     } else {
@@ -90,36 +84,20 @@ fn calc_rank_sep(
 }
 
 /// Python's `_calc_rank_cutoff`.
-fn calc_rank_cutoff(
-    degree: u64,
-    interspersal: u64,
-    pow: u64,
-    num_strata_deposited: u64,
-) -> u64 {
-    let target_recency =
-        calc_target_recency(degree, pow, num_strata_deposited);
-    let extended =
-        target_recency * (interspersal + 1) as f64 / interspersal as f64;
+fn calc_rank_cutoff(degree: u64, interspersal: u64, pow: u64, num_strata_deposited: u64) -> u64 {
+    let target_recency = calc_target_recency(degree, pow, num_strata_deposited);
+    let extended = target_recency * (interspersal + 1) as f64 / interspersal as f64;
     let extended_ceil = libm::ceil(extended) as u64;
-    if extended_ceil >= num_strata_deposited {
-        0
-    } else {
-        num_strata_deposited - extended_ceil
-    }
+    num_strata_deposited.saturating_sub(extended_ceil)
 }
 
 /// Python's `_calc_rank_backstop` -- round UP `rank_cutoff` to a multiple of
 /// `rank_sep`.
-fn calc_rank_backstop(
-    degree: u64,
-    interspersal: u64,
-    pow: u64,
-    num_strata_deposited: u64,
-) -> u64 {
+fn calc_rank_backstop(degree: u64, interspersal: u64, pow: u64, num_strata_deposited: u64) -> u64 {
     let cutoff = calc_rank_cutoff(degree, interspersal, pow, num_strata_deposited);
     let sep = calc_rank_sep(degree, interspersal, pow, num_strata_deposited);
     // Round UP to next multiple of sep (Python: `cutoff - (cutoff % -sep)`)
-    if cutoff % sep == 0 {
+    if cutoff.is_multiple_of(sep) {
         cutoff
     } else {
         cutoff + sep - (cutoff % sep)
@@ -132,11 +110,7 @@ fn calc_rank_backstop(
 
 /// Binary search: find the smallest `x` in `[lo, hi]` where `pred(x)` is true.
 /// Returns `None` if no such x exists.
-fn binary_search_first<F: Fn(u64) -> bool>(
-    pred: &F,
-    lo: u64,
-    hi: u64,
-) -> Option<u64> {
+fn binary_search_first<F: Fn(u64) -> bool>(pred: &F, lo: u64, hi: u64) -> Option<u64> {
     let mut lo = lo;
     let mut hi = hi;
     while lo < hi {
@@ -229,19 +203,12 @@ fn iter_priority_ranks(
 
     if pow == degree {
         // Special case for highest degree: use calc_rank_sep threshold
-        biggest_relevant_rank = doubling_search(
-            &|x: u64| calc_rank_sep(d, i, pow, x + 1) >= n,
-            n,
-        );
-        biggest_relevant_sep =
-            calc_rank_sep(d, i, pow, biggest_relevant_rank);
+        biggest_relevant_rank = doubling_search(&|x: u64| calc_rank_sep(d, i, pow, x + 1) >= n, n);
+        biggest_relevant_sep = calc_rank_sep(d, i, pow, biggest_relevant_rank);
     } else {
-        biggest_relevant_rank = doubling_search(
-            &|x: u64| calc_rank_backstop(d, i, pow, x + 1) >= n,
-            n,
-        );
-        biggest_relevant_sep =
-            calc_rank_sep(d, i, pow, biggest_relevant_rank);
+        biggest_relevant_rank =
+            doubling_search(&|x: u64| calc_rank_backstop(d, i, pow, x + 1) >= n, n);
+        biggest_relevant_sep = calc_rank_sep(d, i, pow, biggest_relevant_rank);
     }
 
     // For each cur_sep in div_range(biggest_relevant_sep, retained_ranks_sep, 2)
@@ -250,8 +217,7 @@ fn iter_priority_ranks(
             &|x: u64| calc_rank_sep(d, i, pow, x) >= cur_sep,
             n.max(cur_sep),
         );
-        let cur_sep_rank_backstop =
-            calc_rank_backstop(d, i, pow, cur_sep_rank);
+        let cur_sep_rank_backstop = calc_rank_backstop(d, i, pow, cur_sep_rank);
 
         // yield from reversed(range(backstop, min(cur_sep_rank+1, n), cur_sep))
         let stop = (cur_sep_rank + 1).min(n);
@@ -334,11 +300,7 @@ fn calc_upper_bound(degree: u64, interspersal: u64, num_strata_deposited: u64) -
 ///
 /// Faithfully ports Python hstrat's `_get_retained_ranks` for
 /// `geom_seq_nth_root_tapered_algo`.
-fn compute_retained_ranks(
-    degree: u64,
-    interspersal: u64,
-    num_strata_deposited: u64,
-) -> Vec<u64> {
+fn compute_retained_ranks(degree: u64, interspersal: u64, num_strata_deposited: u64) -> Vec<u64> {
     if num_strata_deposited == 0 {
         return Vec::new();
     }
@@ -359,12 +321,7 @@ fn compute_retained_ranks(
     // Pre-generate priority rank sequences for pow = degree down to 1
     let mut priority_seqs: Vec<Vec<u64>> = Vec::new();
     for pow in (1..=degree).rev() {
-        priority_seqs.push(iter_priority_ranks(
-            degree,
-            interspersal,
-            pow,
-            n,
-        ));
+        priority_seqs.push(iter_priority_ranks(degree, interspersal, pow, n));
     }
     // Track current position in each sequence
     let mut positions: Vec<usize> = alloc::vec![0usize; priority_seqs.len()];
@@ -413,11 +370,7 @@ fn compute_retained_ranks(
 }
 
 impl StratumRetentionPolicy for GeometricSeqNthRootTaperedPolicy {
-    fn gen_drop_ranks(
-        &self,
-        num_strata_deposited: u64,
-        retained_ranks: &[u64],
-    ) -> Vec<u64> {
+    fn gen_drop_ranks(&self, num_strata_deposited: u64, retained_ranks: &[u64]) -> Vec<u64> {
         if num_strata_deposited <= 1 {
             return Vec::new();
         }
@@ -441,58 +394,30 @@ impl StratumRetentionPolicy for GeometricSeqNthRootTaperedPolicy {
         alloc::vec![non_conforming[0]]
     }
 
-    fn iter_retained_ranks(
-        &self,
-        num_strata_deposited: u64,
-    ) -> Box<dyn Iterator<Item = u64> + '_> {
-        let ranks = compute_retained_ranks(
-            self.degree,
-            self.interspersal,
-            num_strata_deposited,
-        );
+    fn iter_retained_ranks(&self, num_strata_deposited: u64) -> Box<dyn Iterator<Item = u64> + '_> {
+        let ranks = compute_retained_ranks(self.degree, self.interspersal, num_strata_deposited);
         Box::new(ranks.into_iter())
     }
 
-    fn calc_num_strata_retained_exact(
-        &self,
-        num_strata_deposited: u64,
-    ) -> u64 {
-        compute_retained_ranks(
-            self.degree,
-            self.interspersal,
-            num_strata_deposited,
-        )
-        .len() as u64
+    fn calc_num_strata_retained_exact(&self, num_strata_deposited: u64) -> u64 {
+        compute_retained_ranks(self.degree, self.interspersal, num_strata_deposited).len() as u64
     }
 
-    fn calc_rank_at_column_index(
-        &self,
-        index: usize,
-        num_strata_deposited: u64,
-    ) -> u64 {
-        let ranks: Vec<u64> =
-            self.iter_retained_ranks(num_strata_deposited).collect();
+    fn calc_rank_at_column_index(&self, index: usize, num_strata_deposited: u64) -> u64 {
+        let ranks: Vec<u64> = self.iter_retained_ranks(num_strata_deposited).collect();
         ranks[index]
     }
 
-    fn calc_mrca_uncertainty_abs_exact(
-        &self,
-        num_strata_deposited: u64,
-    ) -> u64 {
+    fn calc_mrca_uncertainty_abs_exact(&self, num_strata_deposited: u64) -> u64 {
         if num_strata_deposited <= 1 {
             return 0;
         }
         // Worst-case gap between consecutive retained ranks.
-        let retained =
-            compute_retained_ranks(self.degree, self.interspersal, num_strata_deposited);
+        let retained = compute_retained_ranks(self.degree, self.interspersal, num_strata_deposited);
         if retained.len() <= 1 {
             return num_strata_deposited.saturating_sub(1);
         }
-        retained
-            .windows(2)
-            .map(|w| w[1] - w[0])
-            .max()
-            .unwrap_or(0)
+        retained.windows(2).map(|w| w[1] - w[0]).max().unwrap_or(0)
     }
 
     fn algo_identifier(&self) -> &'static str {
@@ -521,10 +446,7 @@ mod tests {
             interspersal: 2,
         };
         assert_eq!(policy.calc_num_strata_retained_exact(1), 1);
-        assert_eq!(
-            policy.iter_retained_ranks(1).collect::<Vec<_>>(),
-            vec![0],
-        );
+        assert_eq!(policy.iter_retained_ranks(1).collect::<Vec<_>>(), vec![0],);
     }
 
     #[test]
@@ -545,13 +467,8 @@ mod tests {
             interspersal: 2,
         };
         for n in 1..100u64 {
-            let retained: Vec<u64> =
-                policy.iter_retained_ranks(n).collect();
-            assert!(
-                retained.contains(&0),
-                "n={}: should retain rank 0",
-                n,
-            );
+            let retained: Vec<u64> = policy.iter_retained_ranks(n).collect();
+            assert!(retained.contains(&0), "n={}: should retain rank 0", n,);
             assert!(
                 retained.contains(&(n - 1)),
                 "n={}: should retain newest rank {}",
@@ -599,8 +516,7 @@ mod tests {
             interspersal: 3,
         };
         for n in 0..100 {
-            let retained: Vec<u64> =
-                policy.iter_retained_ranks(n).collect();
+            let retained: Vec<u64> = policy.iter_retained_ranks(n).collect();
             for w in retained.windows(2) {
                 assert!(
                     w[0] < w[1],
@@ -618,10 +534,7 @@ mod tests {
             degree: 2,
             interspersal: 2,
         };
-        assert_eq!(
-            policy.algo_identifier(),
-            "geom_seq_nth_root_tapered_algo",
-        );
+        assert_eq!(policy.algo_identifier(), "geom_seq_nth_root_tapered_algo",);
     }
 
     #[test]

@@ -9,33 +9,22 @@ fn bench_deposit_strata_1m(c: &mut Criterion) {
 
     group.bench_function("perfect_resolution", |b| {
         b.iter(|| {
-            let mut col = HereditaryStratigraphicColumn::with_seed(
-                PerfectResolutionPolicy,
-                64,
-                42,
-            );
+            let mut col = HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy, 64, 42);
             col.deposit_strata(black_box(1_000_000));
         });
     });
 
     group.bench_function("fixed_resolution_10", |b| {
         b.iter(|| {
-            let mut col = HereditaryStratigraphicColumn::with_seed(
-                FixedResolutionPolicy::new(10),
-                64,
-                42,
-            );
+            let mut col =
+                HereditaryStratigraphicColumn::with_seed(FixedResolutionPolicy::new(10), 64, 42);
             col.deposit_strata(black_box(1_000_000));
         });
     });
 
     group.bench_function("nominal_resolution", |b| {
         b.iter(|| {
-            let mut col = HereditaryStratigraphicColumn::with_seed(
-                NominalResolutionPolicy,
-                64,
-                42,
-            );
+            let mut col = HereditaryStratigraphicColumn::with_seed(NominalResolutionPolicy, 64, 42);
             col.deposit_strata(black_box(1_000_000));
         });
     });
@@ -48,11 +37,8 @@ fn bench_mrca_10k(c: &mut Criterion) {
     group.sample_size(10);
 
     group.bench_function("10k_pairs_fixed_res", |b| {
-        let mut ancestor = HereditaryStratigraphicColumn::with_seed(
-            FixedResolutionPolicy::new(10),
-            64,
-            42,
-        );
+        let mut ancestor =
+            HereditaryStratigraphicColumn::with_seed(FixedResolutionPolicy::new(10), 64, 42);
         ancestor.deposit_strata(100);
 
         let mut children = Vec::with_capacity(100);
@@ -66,12 +52,10 @@ fn bench_mrca_10k(c: &mut Criterion) {
             let mut count = 0u64;
             for i in 0..children.len() {
                 for j in (i + 1)..children.len() {
-                    if let Some((lo, _hi)) =
-                        reconstruction::calc_rank_of_mrca_bounds_between(
-                            black_box(&children[i]),
-                            black_box(&children[j]),
-                        )
-                    {
+                    if let Some((lo, _hi)) = reconstruction::calc_rank_of_mrca_bounds_between(
+                        black_box(&children[i]),
+                        black_box(&children[j]),
+                    ) {
                         count += lo;
                     }
                 }
@@ -88,11 +72,8 @@ fn bench_build_tree_10k(c: &mut Criterion) {
     group.sample_size(10);
 
     group.bench_function("10k_tips_fixed_res", |b| {
-        let mut ancestor = HereditaryStratigraphicColumn::with_seed(
-            FixedResolutionPolicy::new(10),
-            64,
-            42,
-        );
+        let mut ancestor =
+            HereditaryStratigraphicColumn::with_seed(FixedResolutionPolicy::new(10), 64, 42);
         ancestor.deposit_strata(100);
 
         let mut population = Vec::with_capacity(10_000);
@@ -119,11 +100,8 @@ fn bench_build_tree_100k(c: &mut Criterion) {
     group.sample_size(10);
 
     group.bench_function("100k_tips_fixed_res", |b| {
-        let mut ancestor = HereditaryStratigraphicColumn::with_seed(
-            FixedResolutionPolicy::new(10),
-            64,
-            42,
-        );
+        let mut ancestor =
+            HereditaryStratigraphicColumn::with_seed(FixedResolutionPolicy::new(10), 64, 42);
         ancestor.deposit_strata(100);
 
         let mut population = Vec::with_capacity(100_000);

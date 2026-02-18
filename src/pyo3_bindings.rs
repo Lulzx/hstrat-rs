@@ -21,20 +21,30 @@ pub struct PyHereditaryStratigraphicColumn {
 
 #[cfg(feature = "pyo3")]
 impl PyHereditaryStratigraphicColumn {
-    fn get_kwarg_u64(kwargs: &Option<Bound<'_, PyDict>>, key: &str, default: u64) -> u64 {
-        kwargs
-            .as_ref()
-            .and_then(|kw| kw.get_item(key).ok().flatten())
-            .and_then(|v| v.extract::<u64>().ok())
-            .unwrap_or(default)
+    fn get_kwarg_u64(kwargs: &Option<Bound<'_, PyDict>>, key: &str, default: u64) -> PyResult<u64> {
+        if let Some(kw) = kwargs {
+            if let Some(v) = kw.get_item(key)? {
+                return v.extract::<u64>().map_err(|_| {
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                        "keyword '{key}' must be a non-negative integer"
+                    ))
+                });
+            }
+        }
+        Ok(default)
     }
 
-    fn get_kwarg_f64(kwargs: &Option<Bound<'_, PyDict>>, key: &str, default: f64) -> f64 {
-        kwargs
-            .as_ref()
-            .and_then(|kw| kw.get_item(key).ok().flatten())
-            .and_then(|v| v.extract::<f64>().ok())
-            .unwrap_or(default)
+    fn get_kwarg_f64(kwargs: &Option<Bound<'_, PyDict>>, key: &str, default: f64) -> PyResult<f64> {
+        if let Some(kw) = kwargs {
+            if let Some(v) = kw.get_item(key)? {
+                return v.extract::<f64>().map_err(|_| {
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                        "keyword '{key}' must be a number"
+                    ))
+                });
+            }
+        }
+        Ok(default)
     }
 }
 
@@ -50,64 +60,119 @@ impl PyHereditaryStratigraphicColumn {
     ) -> PyResult<Self> {
         use crate::policies::*;
 
+        if !(1..=64).contains(&differentia_bit_width) {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "differentia_bit_width must be in 1..=64, got {}",
+                differentia_bit_width
+            )));
+        }
+
         let policy = match policy_name {
             "fixed_resolution" => {
-                let resolution = Self::get_kwarg_u64(&kwargs, "resolution", 10);
+                let resolution = Self::get_kwarg_u64(&kwargs, "resolution", 10)?;
+                if resolution == 0 {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        "resolution must be positive",
+                    ));
+                }
                 DynamicPolicy::FixedResolution(FixedResolutionPolicy::new(resolution))
             }
-            "perfect_resolution" => {
-                DynamicPolicy::PerfectResolution(PerfectResolutionPolicy)
-            }
-            "nominal_resolution" => {
-                DynamicPolicy::NominalResolution(NominalResolutionPolicy)
-            }
+            "perfect_resolution" => DynamicPolicy::PerfectResolution(PerfectResolutionPolicy),
+            "nominal_resolution" => DynamicPolicy::NominalResolution(NominalResolutionPolicy),
             "recency_proportional" => {
-                let resolution = Self::get_kwarg_u64(&kwargs, "resolution", 3);
+                let resolution = Self::get_kwarg_u64(&kwargs, "resolution", 3)?;
+                if resolution == 0 {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        "resolution must be positive",
+                    ));
+                }
                 DynamicPolicy::RecencyProportional(RecencyProportionalPolicy::new(resolution))
             }
             "curbed_recency_proportional" => {
-                let size_curb = Self::get_kwarg_u64(&kwargs, "size_curb", 10);
-                DynamicPolicy::CurbedRecencyProportional(
-                    CurbedRecencyProportionalPolicy::new(size_curb),
-                )
+                let size_curb = Self::get_kwarg_u64(&kwargs, "size_curb", 10)?;
+                if size_curb < 8 {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        "size_curb must be at least 8",
+                    ));
+                }
+                DynamicPolicy::CurbedRecencyProportional(CurbedRecencyProportionalPolicy::new(
+                    size_curb,
+                ))
             }
             "geometric_seq_nth_root" => {
-                let degree = Self::get_kwarg_u64(&kwargs, "degree", 2);
-                let interspersal = Self::get_kwarg_u64(&kwargs, "interspersal", 2);
+                let degree = Self::get_kwarg_u64(&kwargs, "degree", 2)?;
+                let interspersal = Self::get_kwarg_u64(&kwargs, "interspersal", 2)?;
+                if degree == 0 {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        "degree must be positive",
+                    ));
+                }
+                if interspersal == 0 {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        "interspersal must be positive",
+                    ));
+                }
                 DynamicPolicy::GeometricSeqNthRoot(GeometricSeqNthRootPolicy::new(
                     degree,
                     interspersal,
                 ))
             }
             "geometric_seq_nth_root_tapered" => {
-                let degree = Self::get_kwarg_u64(&kwargs, "degree", 2);
-                let interspersal = Self::get_kwarg_u64(&kwargs, "interspersal", 2);
-                DynamicPolicy::GeometricSeqNthRootTapered(
-                    GeometricSeqNthRootTaperedPolicy::new(degree, interspersal),
-                )
+                let degree = Self::get_kwarg_u64(&kwargs, "degree", 2)?;
+                let interspersal = Self::get_kwarg_u64(&kwargs, "interspersal", 2)?;
+                if degree == 0 {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        "degree must be positive",
+                    ));
+                }
+                if interspersal == 0 {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        "interspersal must be positive",
+                    ));
+                }
+                DynamicPolicy::GeometricSeqNthRootTapered(GeometricSeqNthRootTaperedPolicy::new(
+                    degree,
+                    interspersal,
+                ))
             }
             "depth_proportional" => {
-                let resolution = Self::get_kwarg_u64(&kwargs, "resolution", 5);
+                let resolution = Self::get_kwarg_u64(&kwargs, "resolution", 5)?;
+                if resolution == 0 {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        "resolution must be positive",
+                    ));
+                }
                 DynamicPolicy::DepthProportional(DepthProportionalPolicy::new(resolution))
             }
             "depth_proportional_tapered" => {
-                let resolution = Self::get_kwarg_u64(&kwargs, "resolution", 5);
-                DynamicPolicy::DepthProportionalTapered(
-                    DepthProportionalTaperedPolicy::new(resolution),
-                )
+                let resolution = Self::get_kwarg_u64(&kwargs, "resolution", 5)?;
+                if resolution == 0 {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        "resolution must be positive",
+                    ));
+                }
+                DynamicPolicy::DepthProportionalTapered(DepthProportionalTaperedPolicy::new(
+                    resolution,
+                ))
             }
             "pseudostochastic" => {
-                let hash_salt = Self::get_kwarg_u64(&kwargs, "hash_salt", 0);
+                let hash_salt = Self::get_kwarg_u64(&kwargs, "hash_salt", 0)?;
                 DynamicPolicy::Pseudostochastic(PseudostochasticPolicy::new(hash_salt))
             }
             "stochastic" => {
-                let prob = Self::get_kwarg_f64(&kwargs, "retention_probability", 0.5);
+                let prob = Self::get_kwarg_f64(&kwargs, "retention_probability", 0.5)?;
+                if !prob.is_finite() || !(0.0..=1.0).contains(&prob) {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        "retention_probability must be in 0.0..=1.0",
+                    ));
+                }
                 DynamicPolicy::Stochastic(StochasticPolicy::new(prob))
             }
             _ => {
-                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    format!("unknown policy: {}", policy_name),
-                ));
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "unknown policy: {}",
+                    policy_name
+                )));
             }
         };
 
@@ -121,11 +186,7 @@ impl PyHereditaryStratigraphicColumn {
         };
 
         Ok(Self {
-            inner: HereditaryStratigraphicColumn::with_seed(
-                policy,
-                differentia_bit_width,
-                seed,
-            ),
+            inner: HereditaryStratigraphicColumn::with_seed(policy, differentia_bit_width, seed),
         })
     }
 
@@ -160,7 +221,10 @@ impl PyHereditaryStratigraphicColumn {
     }
 
     fn get_retained_differentia(&self) -> Vec<u64> {
-        self.inner.iter_retained_differentia().map(|d| d.value()).collect()
+        self.inner
+            .iter_retained_differentia()
+            .map(|d| d.value())
+            .collect()
     }
 
     fn get_policy_algo_identifier(&self) -> &'static str {
@@ -206,9 +270,10 @@ fn build_tree(
         "shortcut" | "shortcut_consolidation" => TreeAlgorithm::ShortcutConsolidation,
         "naive" | "naive_trie" => TreeAlgorithm::NaiveTrie,
         _ => {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                format!("unknown algorithm: {}", algorithm),
-            ))
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "unknown algorithm: {}",
+                algorithm
+            )))
         }
     };
 

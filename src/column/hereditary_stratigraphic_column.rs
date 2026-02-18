@@ -36,8 +36,8 @@ impl<P: StratumRetentionPolicy> HereditaryStratigraphicColumn<P> {
     /// used; prefer [`with_seed`](Self::with_seed) for deterministic
     /// reproducibility.
     pub fn new(policy: P, differentia_bit_width: u8) -> Self {
-        debug_assert!(
-            differentia_bit_width >= 1 && differentia_bit_width <= 64,
+        assert!(
+            (1..=64).contains(&differentia_bit_width),
             "differentia_bit_width must be in 1..=64, got {}",
             differentia_bit_width
         );
@@ -65,8 +65,8 @@ impl<P: StratumRetentionPolicy> HereditaryStratigraphicColumn<P> {
 
     /// Create a new column with a deterministic seed for reproducibility.
     pub fn with_seed(policy: P, differentia_bit_width: u8, seed: u64) -> Self {
-        debug_assert!(
-            differentia_bit_width >= 1 && differentia_bit_width <= 64,
+        assert!(
+            (1..=64).contains(&differentia_bit_width),
             "differentia_bit_width must be in 1..=64, got {}",
             differentia_bit_width
         );
@@ -89,6 +89,11 @@ impl<P: StratumRetentionPolicy> HereditaryStratigraphicColumn<P> {
         strata: Vec<Stratum>,
         num_strata_deposited: u64,
     ) -> Self {
+        assert!(
+            (1..=64).contains(&differentia_bit_width),
+            "differentia_bit_width must be in 1..=64, got {}",
+            differentia_bit_width
+        );
         Self {
             policy,
             differentia_bit_width,
@@ -121,31 +126,37 @@ impl<P: StratumRetentionPolicy> HereditaryStratigraphicColumn<P> {
             return;
         }
 
-        // Common case: exactly one rank to drop (the former-newest that
-        // is no longer aligned with the policy's spacing rule).
-        // Remove it directly instead of scanning the entire column.
-        if self.strata.len() == expected + 1 && self.strata.len() >= 2 {
-            // The second-most-recent was the newest at the prior step
-            // and is the most likely candidate for dropping.
+        // Fast path for policies that always drop the former-newest when
+        // exactly one stratum must be removed.
+        if self.policy.fast_drop_singleton_is_second_most_recent()
+            && self.strata.len() == expected + 1
+            && self.strata.len() >= 2
+        {
             let idx = self.strata.len() - 2;
             self.strata.remove(idx);
+            return;
+        }
 
-            // Verify post-condition; if wrong, fall through to full scan
-            if self.strata.len() == expected {
+        // Slow path: ask policy for exact ranks to drop.
+        let retained_ranks: Vec<u64> = self.strata.iter().map(|s| s.rank).collect();
+        let drop_ranks = self
+            .policy
+            .gen_drop_ranks(self.num_strata_deposited, &retained_ranks);
+        if drop_ranks.is_empty() {
+            return;
+        }
+
+        // Common case: exactly one rank to drop and it is the former-newest.
+        if drop_ranks.len() == 1 && self.strata.len() >= 2 {
+            let idx = self.strata.len() - 2;
+            if self.strata[idx].rank == drop_ranks[0] {
+                self.strata.remove(idx);
                 return;
             }
         }
 
-        // Slow path: bulk pruning (threshold crossings in some policies)
-        let retained_ranks: Vec<u64> = self.strata.iter().map(|s| s.rank).collect();
-        let drop_ranks =
-            self.policy
-                .gen_drop_ranks(self.num_strata_deposited, &retained_ranks);
-        if !drop_ranks.is_empty() {
-            let drop_set: alloc::collections::BTreeSet<u64> =
-                drop_ranks.into_iter().collect();
-            self.strata.retain(|s| !drop_set.contains(&s.rank));
-        }
+        let drop_set: alloc::collections::BTreeSet<u64> = drop_ranks.into_iter().collect();
+        self.strata.retain(|s| !drop_set.contains(&s.rank));
     }
 
     /// Deposit `n` strata in succession.
@@ -219,6 +230,60 @@ impl<P: StratumRetentionPolicy> HereditaryStratigraphicColumn<P> {
 mod tests {
     use super::*;
     use crate::policies::{FixedResolutionPolicy, PerfectResolutionPolicy};
+    use alloc::boxed::Box;
+
+    #[derive(Clone, Debug, PartialEq)]
+    struct TwoNewestPolicy;
+
+    impl StratumRetentionPolicy for TwoNewestPolicy {
+        fn gen_drop_ranks(&self, n: u64, retained_ranks: &[u64]) -> Vec<u64> {
+            if n <= 2 {
+                return Vec::new();
+            }
+            let keep_lo = n - 2;
+            let keep_hi = n - 1;
+            retained_ranks
+                .iter()
+                .copied()
+                .filter(|&r| r != keep_lo && r != keep_hi)
+                .collect()
+        }
+
+        fn iter_retained_ranks(&self, n: u64) -> Box<dyn Iterator<Item = u64> + '_> {
+            match n {
+                0 => Box::new(core::iter::empty()),
+                1 => Box::new(core::iter::once(0)),
+                _ => Box::new([n - 2, n - 1].into_iter()),
+            }
+        }
+
+        fn calc_num_strata_retained_exact(&self, n: u64) -> u64 {
+            n.min(2)
+        }
+
+        fn calc_rank_at_column_index(&self, index: usize, n: u64) -> u64 {
+            match (n, index) {
+                (0, _) => panic!("index out of bounds for empty column"),
+                (1, 0) => 0,
+                (1, _) => panic!("index out of bounds for single-element column"),
+                (_, 0) => n - 2,
+                (_, 1) => n - 1,
+                _ => panic!("index out of bounds for two-element column"),
+            }
+        }
+
+        fn calc_mrca_uncertainty_abs_exact(&self, n: u64) -> u64 {
+            if n <= 1 {
+                0
+            } else {
+                1
+            }
+        }
+
+        fn algo_identifier(&self) -> &'static str {
+            "test_two_newest_policy"
+        }
+    }
 
     #[test]
     fn test_perfect_resolution_retains_all() {
@@ -236,11 +301,8 @@ mod tests {
 
     #[test]
     fn test_fixed_resolution_correct_retention() {
-        let mut col = HereditaryStratigraphicColumn::with_seed(
-            FixedResolutionPolicy::new(10),
-            64,
-            42,
-        );
+        let mut col =
+            HereditaryStratigraphicColumn::with_seed(FixedResolutionPolicy::new(10), 64, 42);
         col.deposit_strata(100);
         assert_eq!(col.get_num_strata_deposited(), 100);
 
@@ -251,11 +313,7 @@ mod tests {
         assert_eq!(*ranks.last().unwrap(), 99);
         // Check that ranks are multiples of 10 plus the newest rank (99)
         for &r in &ranks {
-            assert!(
-                r % 10 == 0 || r == 99,
-                "unexpected rank {} retained",
-                r
-            );
+            assert!(r % 10 == 0 || r == 99, "unexpected rank {} retained", r);
         }
         // Expected: 0,10,20,30,40,50,60,70,80,90,99 = 11
         assert_eq!(col.get_num_strata_retained(), 11);
@@ -305,11 +363,8 @@ mod tests {
 
     #[test]
     fn test_get_stratum_at_rank_with_pruning() {
-        let mut col = HereditaryStratigraphicColumn::with_seed(
-            FixedResolutionPolicy::new(10),
-            64,
-            42,
-        );
+        let mut col =
+            HereditaryStratigraphicColumn::with_seed(FixedResolutionPolicy::new(10), 64, 42);
         col.deposit_strata(100);
 
         // Rank 0 should be retained
@@ -324,8 +379,7 @@ mod tests {
 
     #[test]
     fn test_zero_deposits() {
-        let col =
-            HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy::new(), 64, 42);
+        let col = HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy::new(), 64, 42);
         assert_eq!(col.get_num_strata_deposited(), 0);
         assert_eq!(col.get_num_strata_retained(), 0);
         assert!(col.iter_retained_ranks().next().is_none());
@@ -412,8 +466,14 @@ mod tests {
         col1.deposit_strata(50);
         col2.deposit_strata(50);
 
-        let d1: Vec<u64> = col1.iter_retained_differentia().map(|d| d.value()).collect();
-        let d2: Vec<u64> = col2.iter_retained_differentia().map(|d| d.value()).collect();
+        let d1: Vec<u64> = col1
+            .iter_retained_differentia()
+            .map(|d| d.value())
+            .collect();
+        let d2: Vec<u64> = col2
+            .iter_retained_differentia()
+            .map(|d| d.value())
+            .collect();
         assert_eq!(d1, d2, "same seed should produce identical differentia");
     }
 
@@ -426,9 +486,26 @@ mod tests {
         col1.deposit_strata(50);
         col2.deposit_strata(50);
 
-        let d1: Vec<u64> = col1.iter_retained_differentia().map(|d| d.value()).collect();
-        let d2: Vec<u64> = col2.iter_retained_differentia().map(|d| d.value()).collect();
+        let d1: Vec<u64> = col1
+            .iter_retained_differentia()
+            .map(|d| d.value())
+            .collect();
+        let d2: Vec<u64> = col2
+            .iter_retained_differentia()
+            .map(|d| d.value())
+            .collect();
         // With 64-bit differentia, the chance of all 50 being equal with different seeds is 0
-        assert_ne!(d1, d2, "different seeds should produce different differentia");
+        assert_ne!(
+            d1, d2,
+            "different seeds should produce different differentia"
+        );
+    }
+
+    #[test]
+    fn test_single_drop_not_second_most_recent() {
+        let mut col = HereditaryStratigraphicColumn::with_seed(TwoNewestPolicy, 64, 42);
+        col.deposit_strata(3);
+        let ranks: Vec<u64> = col.iter_retained_ranks().collect();
+        assert_eq!(ranks, vec![1, 2]);
     }
 }

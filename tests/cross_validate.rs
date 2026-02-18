@@ -39,11 +39,7 @@ fn policy_invariants(policy: &impl StratumRetentionPolicy, max_n: u64) {
         }
 
         // Always retains rank 0
-        assert_eq!(
-            *ranks.first().unwrap(),
-            0,
-            "rank 0 not retained at n={n}"
-        );
+        assert_eq!(*ranks.first().unwrap(), 0, "rank 0 not retained at n={n}");
 
         // Always retains newest rank
         assert_eq!(
@@ -119,10 +115,7 @@ fn recency_proportional_invariants() {
 fn geometric_seq_nth_root_invariants() {
     for degree in [2, 3, 5] {
         for interspersal in [1, 2, 4] {
-            policy_invariants(
-                &GeometricSeqNthRootPolicy::new(degree, interspersal),
-                200,
-            );
+            policy_invariants(&GeometricSeqNthRootPolicy::new(degree, interspersal), 200);
         }
     }
 }
@@ -130,21 +123,13 @@ fn geometric_seq_nth_root_invariants() {
 #[test]
 fn geometric_seq_nth_root_tapered_invariants() {
     for degree in [2, 3, 5] {
-        policy_invariants(
-            &GeometricSeqNthRootTaperedPolicy::new(degree, 2),
-            200,
-        );
+        policy_invariants(&GeometricSeqNthRootTaperedPolicy::new(degree, 2), 200);
     }
 }
 
 // ─── Column Invariants ───
 
-fn column_invariants<P: StratumRetentionPolicy>(
-    policy: P,
-    bit_width: u8,
-    seed: u64,
-    n: u64,
-) {
+fn column_invariants<P: StratumRetentionPolicy>(policy: P, bit_width: u8, seed: u64, n: u64) {
     let mut col = HereditaryStratigraphicColumn::with_seed(policy, bit_width, seed);
     col.deposit_strata(n);
 
@@ -220,17 +205,13 @@ proptest! {
 fn mrca_parent_child_bound_contains_truth() {
     // Parent-child: MRCA is parent's newest rank
     for seed in [0, 42, 123, 999] {
-        let mut parent = HereditaryStratigraphicColumn::with_seed(
-            PerfectResolutionPolicy::new(),
-            64,
-            seed,
-        );
+        let mut parent =
+            HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy::new(), 64, seed);
         parent.deposit_strata(20);
         let mut child = parent.clone_descendant();
         child.deposit_strata(10);
 
-        let (lower, upper) =
-            calc_rank_of_mrca_bounds_between(&parent, &child).unwrap();
+        let (lower, upper) = calc_rank_of_mrca_bounds_between(&parent, &child).unwrap();
         // True MRCA is at rank 19 (parent's newest when cloned)
         assert!(lower <= 19);
         assert!(upper >= 19);
@@ -250,11 +231,8 @@ fn mrca_siblings_bound_contains_truth() {
     // clone_descendant uses the cloned RNG which produces the same next value.
     // To truly test siblings, we need to deposit more strata to ensure divergence.
     for seed in [0, 42, 123] {
-        let mut ancestor = HereditaryStratigraphicColumn::with_seed(
-            PerfectResolutionPolicy::new(),
-            64,
-            seed,
-        );
+        let mut ancestor =
+            HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy::new(), 64, seed);
         ancestor.deposit_strata(10);
 
         // Clone twice — both clone the same RNG state, so rank 10 differentia
@@ -275,23 +253,20 @@ fn mrca_siblings_bound_contains_truth() {
         // True MRCA is >= 9 (at least the ancestor's last rank).
         // The bounds should contain the truth.
         assert!(lower >= 9, "lower bound {} should be >= 9", lower);
-        assert!(upper >= lower, "upper {} should be >= lower {}", upper, lower);
+        assert!(
+            upper >= lower,
+            "upper {} should be >= lower {}",
+            upper,
+            lower
+        );
     }
 }
 
 #[test]
 fn mrca_unrelated_columns_none() {
     // Two independently created columns (different seeds)
-    let mut a = HereditaryStratigraphicColumn::with_seed(
-        PerfectResolutionPolicy::new(),
-        64,
-        1,
-    );
-    let mut b = HereditaryStratigraphicColumn::with_seed(
-        PerfectResolutionPolicy::new(),
-        64,
-        2,
-    );
+    let mut a = HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy::new(), 64, 1);
+    let mut b = HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy::new(), 64, 2);
     a.deposit_strata(10);
     b.deposit_strata(10);
 
@@ -360,11 +335,8 @@ proptest! {
 #[test]
 fn tree_leaves_match_population_count() {
     for pop_size in [1, 2, 5, 10, 20] {
-        let mut ancestor = HereditaryStratigraphicColumn::with_seed(
-            PerfectResolutionPolicy::new(),
-            64,
-            42,
-        );
+        let mut ancestor =
+            HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy::new(), 64, 42);
         ancestor.deposit_strata(5);
 
         let mut population = Vec::new();
@@ -391,11 +363,8 @@ fn tree_leaves_match_population_count() {
 
 #[test]
 fn tree_ancestor_ids_valid() {
-    let mut ancestor = HereditaryStratigraphicColumn::with_seed(
-        PerfectResolutionPolicy::new(),
-        64,
-        42,
-    );
+    let mut ancestor =
+        HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy::new(), 64, 42);
     ancestor.deposit_strata(5);
 
     let mut population = Vec::new();
@@ -422,11 +391,8 @@ fn tree_ancestor_ids_valid() {
 
 #[test]
 fn tree_origin_times_non_negative() {
-    let mut ancestor = HereditaryStratigraphicColumn::with_seed(
-        PerfectResolutionPolicy::new(),
-        64,
-        42,
-    );
+    let mut ancestor =
+        HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy::new(), 64, 42);
     ancestor.deposit_strata(10);
 
     let mut population = Vec::new();
@@ -447,16 +413,10 @@ fn tree_origin_times_non_negative() {
 #[test]
 fn column_deterministic_with_same_seed() {
     for bit_width in [1, 8, 32, 64] {
-        let mut a = HereditaryStratigraphicColumn::with_seed(
-            PerfectResolutionPolicy::new(),
-            bit_width,
-            42,
-        );
-        let mut b = HereditaryStratigraphicColumn::with_seed(
-            PerfectResolutionPolicy::new(),
-            bit_width,
-            42,
-        );
+        let mut a =
+            HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy::new(), bit_width, 42);
+        let mut b =
+            HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy::new(), bit_width, 42);
         a.deposit_strata(100);
         b.deposit_strata(100);
 
@@ -469,11 +429,8 @@ fn column_deterministic_with_same_seed() {
 #[test]
 fn tree_deterministic() {
     let build = || {
-        let mut ancestor = HereditaryStratigraphicColumn::with_seed(
-            PerfectResolutionPolicy::new(),
-            64,
-            42,
-        );
+        let mut ancestor =
+            HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy::new(), 64, 42);
         ancestor.deposit_strata(5);
         let pop: Vec<_> = (0..10)
             .map(|_| {
@@ -498,15 +455,10 @@ fn tree_deterministic() {
 
 /// Helper: load a JSON file from the fixtures directory.
 fn load_fixture(path: &str) -> serde_json::Value {
-    let full = format!(
-        "{}/tests/fixtures/{}",
-        env!("CARGO_MANIFEST_DIR"),
-        path
-    );
-    let data = std::fs::read_to_string(&full)
-        .unwrap_or_else(|e| panic!("failed to read {}: {}", full, e));
-    serde_json::from_str(&data)
-        .unwrap_or_else(|e| panic!("failed to parse {}: {}", full, e))
+    let full = format!("{}/tests/fixtures/{}", env!("CARGO_MANIFEST_DIR"), path);
+    let data =
+        std::fs::read_to_string(&full).unwrap_or_else(|e| panic!("failed to read {}: {}", full, e));
+    serde_json::from_str(&data).unwrap_or_else(|e| panic!("failed to parse {}: {}", full, e))
 }
 
 /// Verify policy retained ranks match Python hstrat for all n=0..1000.
@@ -573,18 +525,12 @@ fn fixture_nominal_resolution() {
 
 #[test]
 fn fixture_recency_proportional_1() {
-    check_policy_vector(
-        &RecencyProportionalPolicy::new(1),
-        "recency_proportional_1",
-    );
+    check_policy_vector(&RecencyProportionalPolicy::new(1), "recency_proportional_1");
 }
 
 #[test]
 fn fixture_recency_proportional_3() {
-    check_policy_vector(
-        &RecencyProportionalPolicy::new(3),
-        "recency_proportional_3",
-    );
+    check_policy_vector(&RecencyProportionalPolicy::new(3), "recency_proportional_3");
 }
 
 #[test]
@@ -597,26 +543,17 @@ fn fixture_recency_proportional_10() {
 
 #[test]
 fn fixture_depth_proportional_1() {
-    check_policy_vector(
-        &DepthProportionalPolicy::new(1),
-        "depth_proportional_1",
-    );
+    check_policy_vector(&DepthProportionalPolicy::new(1), "depth_proportional_1");
 }
 
 #[test]
 fn fixture_depth_proportional_5() {
-    check_policy_vector(
-        &DepthProportionalPolicy::new(5),
-        "depth_proportional_5",
-    );
+    check_policy_vector(&DepthProportionalPolicy::new(5), "depth_proportional_5");
 }
 
 #[test]
 fn fixture_depth_proportional_10() {
-    check_policy_vector(
-        &DepthProportionalPolicy::new(10),
-        "depth_proportional_10",
-    );
+    check_policy_vector(&DepthProportionalPolicy::new(10), "depth_proportional_10");
 }
 
 #[test]
@@ -717,9 +654,7 @@ fn check_column_fixture_case(
         "recency_proportional_3" => {
             DynamicPolicy::RecencyProportional(RecencyProportionalPolicy::new(3))
         }
-        "depth_proportional_5" => {
-            DynamicPolicy::DepthProportional(DepthProportionalPolicy::new(5))
-        }
+        "depth_proportional_5" => DynamicPolicy::DepthProportional(DepthProportionalPolicy::new(5)),
         "geometric_seq_nth_root_2_2" => {
             DynamicPolicy::GeometricSeqNthRoot(GeometricSeqNthRootPolicy::new(2, 2))
         }
@@ -758,13 +693,7 @@ fn fixture_column_retained_ranks() {
             .map(|v| v.as_u64().unwrap())
             .collect();
 
-        check_column_fixture_case(
-            policy_name,
-            n,
-            expected_retained,
-            &expected_ranks,
-            name,
-        );
+        check_column_fixture_case(policy_name, n, expected_retained, &expected_ranks, name);
     }
 }
 
@@ -980,7 +909,11 @@ fn pseudostochastic_invariants() {
         for n in 0..=200u64 {
             let count = policy.calc_num_strata_retained_exact(n);
             let ranks: Vec<u64> = policy.iter_retained_ranks(n).collect();
-            assert_eq!(count as usize, ranks.len(), "pseudostochastic count at n={n}, salt={salt}");
+            assert_eq!(
+                count as usize,
+                ranks.len(),
+                "pseudostochastic count at n={n}, salt={salt}"
+            );
             if n == 0 {
                 assert!(ranks.is_empty());
                 continue;
@@ -1074,8 +1007,7 @@ fn retained_ranks_only_dwindle(policy: &impl StratumRetentionPolicy, max_n: u64)
     let mut dropped: std::collections::BTreeSet<u64> = std::collections::BTreeSet::new();
 
     for n in 0..=max_n {
-        let retained: std::collections::BTreeSet<u64> =
-            policy.iter_retained_ranks(n).collect();
+        let retained: std::collections::BTreeSet<u64> = policy.iter_retained_ranks(n).collect();
 
         // No rank in retained should have been previously dropped
         for &r in &retained {
@@ -1159,11 +1091,8 @@ fn dwindle_perfect_resolution() {
 
 #[test]
 fn mrca_bounds_commutative() {
-    let mut ancestor = HereditaryStratigraphicColumn::with_seed(
-        PerfectResolutionPolicy::new(),
-        64,
-        42,
-    );
+    let mut ancestor =
+        HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy::new(), 64, 42);
     ancestor.deposit_strata(20);
 
     let mut a = ancestor.clone_descendant();
@@ -1185,11 +1114,8 @@ fn mrca_bounds_commutative() {
 #[test]
 fn mrca_functions_consistent() {
     for seed in [0, 42, 123, 999] {
-        let mut ancestor = HereditaryStratigraphicColumn::with_seed(
-            PerfectResolutionPolicy::new(),
-            64,
-            seed,
-        );
+        let mut ancestor =
+            HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy::new(), 64, seed);
         ancestor.deposit_strata(15);
 
         let mut child = ancestor.clone_descendant();
@@ -1222,21 +1148,24 @@ fn mrca_functions_consistent() {
 #[test]
 fn mrca_with_different_bit_widths() {
     for bit_width in [1u8, 8, 32, 64] {
-        let mut ancestor = HereditaryStratigraphicColumn::with_seed(
-            PerfectResolutionPolicy::new(),
-            bit_width,
-            42,
-        );
+        let mut ancestor =
+            HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy::new(), bit_width, 42);
         ancestor.deposit_strata(20);
 
         let mut child = ancestor.clone_descendant();
         child.deposit_strata(5);
 
         let has = does_have_any_common_ancestor(&ancestor, &child);
-        assert!(has, "bit_width={bit_width}: parent-child should share ancestor");
+        assert!(
+            has,
+            "bit_width={bit_width}: parent-child should share ancestor"
+        );
 
         let bounds = calc_rank_of_mrca_bounds_between(&ancestor, &child);
-        assert!(bounds.is_some(), "bit_width={bit_width}: should have bounds");
+        assert!(
+            bounds.is_some(),
+            "bit_width={bit_width}: should have bounds"
+        );
 
         let (lower, upper) = bounds.unwrap();
         assert!(lower <= upper, "bit_width={bit_width}: lower <= upper");
@@ -1250,11 +1179,8 @@ fn mrca_with_different_bit_widths() {
 
 #[test]
 fn mrca_with_fixed_resolution_policy() {
-    let mut ancestor = HereditaryStratigraphicColumn::with_seed(
-        FixedResolutionPolicy::new(5),
-        64,
-        42,
-    );
+    let mut ancestor =
+        HereditaryStratigraphicColumn::with_seed(FixedResolutionPolicy::new(5), 64, 42);
     ancestor.deposit_strata(50);
 
     let mut child = ancestor.clone_descendant();
@@ -1269,11 +1195,7 @@ fn mrca_with_fixed_resolution_policy() {
 
 #[test]
 fn mrca_with_nominal_resolution_policy() {
-    let mut ancestor = HereditaryStratigraphicColumn::with_seed(
-        NominalResolutionPolicy,
-        64,
-        42,
-    );
+    let mut ancestor = HereditaryStratigraphicColumn::with_seed(NominalResolutionPolicy, 64, 42);
     ancestor.deposit_strata(50);
 
     let mut child = ancestor.clone_descendant();
@@ -1294,26 +1216,44 @@ fn mrca_population_evolution_100_generations() {
     let shared: Vec<(u64, u64)> = (0..100).map(|r| (r, r * 7 + 42)).collect();
     let mut strata_a: Vec<Stratum> = shared
         .iter()
-        .map(|&(r, d)| Stratum { rank: r, differentia: Differentia::new(d, 64) })
+        .map(|&(r, d)| Stratum {
+            rank: r,
+            differentia: Differentia::new(d, 64),
+        })
         .collect();
     let mut strata_b: Vec<Stratum> = shared
         .iter()
-        .map(|&(r, d)| Stratum { rank: r, differentia: Differentia::new(d, 64) })
+        .map(|&(r, d)| Stratum {
+            rank: r,
+            differentia: Differentia::new(d, 64),
+        })
         .collect();
 
     // Diverge at rank 100+
     for r in 100..200 {
-        strata_a.push(Stratum { rank: r, differentia: Differentia::new(r * 11 + 1, 64) });
+        strata_a.push(Stratum {
+            rank: r,
+            differentia: Differentia::new(r * 11 + 1, 64),
+        });
     }
     for r in 100..150 {
-        strata_b.push(Stratum { rank: r, differentia: Differentia::new(r * 13 + 2, 64) });
+        strata_b.push(Stratum {
+            rank: r,
+            differentia: Differentia::new(r * 13 + 2, 64),
+        });
     }
 
     let col_a = HereditaryStratigraphicColumn::from_parts(
-        PerfectResolutionPolicy::new(), 64, strata_a, 200,
+        PerfectResolutionPolicy::new(),
+        64,
+        strata_a,
+        200,
     );
     let col_b = HereditaryStratigraphicColumn::from_parts(
-        PerfectResolutionPolicy::new(), 64, strata_b, 150,
+        PerfectResolutionPolicy::new(),
+        64,
+        strata_b,
+        150,
     );
 
     assert!(does_have_any_common_ancestor(&col_a, &col_b));
@@ -1326,18 +1266,14 @@ fn mrca_population_evolution_100_generations() {
 
     let (since_a, since_b) = calc_ranks_since_mrca_bounds_between(&col_a, &col_b).unwrap();
     assert_eq!(since_a, 100); // 199 - 99
-    assert_eq!(since_b, 50);  // 149 - 99
+    assert_eq!(since_b, 50); // 149 - 99
 }
 
 // ─── MRCA: Empty / single stratum edge cases ───
 
 #[test]
 fn mrca_one_stratum_columns() {
-    let mut a = HereditaryStratigraphicColumn::with_seed(
-        PerfectResolutionPolicy::new(),
-        64,
-        42,
-    );
+    let mut a = HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy::new(), 64, 42);
     a.deposit_strata(1);
     let b = a.clone_descendant();
 
@@ -1348,16 +1284,8 @@ fn mrca_one_stratum_columns() {
 
 #[test]
 fn mrca_empty_columns() {
-    let a = HereditaryStratigraphicColumn::with_seed(
-        PerfectResolutionPolicy::new(),
-        64,
-        1,
-    );
-    let b = HereditaryStratigraphicColumn::with_seed(
-        PerfectResolutionPolicy::new(),
-        64,
-        2,
-    );
+    let a = HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy::new(), 64, 1);
+    let b = HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy::new(), 64, 2);
     assert!(!does_have_any_common_ancestor(&a, &b));
     assert!(calc_rank_of_mrca_bounds_between(&a, &b).is_none());
     assert!(calc_ranks_since_mrca_bounds_between(&a, &b).is_none());
@@ -1368,11 +1296,8 @@ fn mrca_empty_columns() {
 #[test]
 fn clone_descendant_preserves_properties() {
     for bit_width in [1u8, 8, 32, 64] {
-        let mut parent = HereditaryStratigraphicColumn::with_seed(
-            FixedResolutionPolicy::new(10),
-            bit_width,
-            42,
-        );
+        let mut parent =
+            HereditaryStratigraphicColumn::with_seed(FixedResolutionPolicy::new(10), bit_width, 42);
         parent.deposit_strata(50);
 
         let desc = parent.clone_descendant();
@@ -1382,11 +1307,7 @@ fn clone_descendant_preserves_properties() {
             parent.get_stratum_differentia_bit_width(),
             "bit_width preserved"
         );
-        assert_eq!(
-            desc.get_policy(),
-            parent.get_policy(),
-            "policy preserved"
-        );
+        assert_eq!(desc.get_policy(), parent.get_policy(), "policy preserved");
         assert_eq!(
             desc.get_num_strata_deposited(),
             parent.get_num_strata_deposited() + 1,
@@ -1400,11 +1321,8 @@ fn clone_descendant_preserves_properties() {
 #[test]
 fn clone_descendant_strata_superset() {
     // With PerfectResolution, descendant should contain all parent's strata
-    let mut parent = HereditaryStratigraphicColumn::with_seed(
-        PerfectResolutionPolicy::new(),
-        64,
-        42,
-    );
+    let mut parent =
+        HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy::new(), 64, 42);
     parent.deposit_strata(30);
 
     let desc = parent.clone_descendant();
@@ -1435,11 +1353,8 @@ fn clone_descendant_strata_superset() {
 
 #[test]
 fn population_evolution_multi_generation() {
-    let mut ancestor = HereditaryStratigraphicColumn::with_seed(
-        FixedResolutionPolicy::new(10),
-        64,
-        42,
-    );
+    let mut ancestor =
+        HereditaryStratigraphicColumn::with_seed(FixedResolutionPolicy::new(10), 64, 42);
     ancestor.deposit_strata(10);
 
     // Build a population of 20 from the ancestor
@@ -1463,7 +1378,10 @@ fn population_evolution_multi_generation() {
     // All organisms should have valid column state
     for (i, org) in population.iter().enumerate() {
         assert!(org.get_num_strata_deposited() > 0, "org {i} has deposits");
-        assert!(org.get_num_strata_retained() > 0, "org {i} has retained strata");
+        assert!(
+            org.get_num_strata_retained() > 0,
+            "org {i} has retained strata"
+        );
         // Ranks should be sorted
         let ranks: Vec<u64> = org.iter_retained_ranks().collect();
         for w in ranks.windows(2) {
@@ -1476,8 +1394,7 @@ fn population_evolution_multi_generation() {
         for j in (i + 1)..population.len() {
             let has_common = does_have_any_common_ancestor(&population[i], &population[j]);
             if has_common {
-                let bounds =
-                    calc_rank_of_mrca_bounds_between(&population[i], &population[j]);
+                let bounds = calc_rank_of_mrca_bounds_between(&population[i], &population[j]);
                 assert!(bounds.is_some());
                 let (lower, upper) = bounds.unwrap();
                 assert!(lower <= upper);
@@ -1491,9 +1408,18 @@ fn population_evolution_multi_generation() {
 #[test]
 fn from_parts_preserves_strata() {
     let strata = vec![
-        Stratum { rank: 0, differentia: Differentia::new(42, 64) },
-        Stratum { rank: 5, differentia: Differentia::new(100, 64) },
-        Stratum { rank: 10, differentia: Differentia::new(200, 64) },
+        Stratum {
+            rank: 0,
+            differentia: Differentia::new(42, 64),
+        },
+        Stratum {
+            rank: 5,
+            differentia: Differentia::new(100, 64),
+        },
+        Stratum {
+            rank: 10,
+            differentia: Differentia::new(200, 64),
+        },
     ];
     let col = HereditaryStratigraphicColumn::from_parts(
         PerfectResolutionPolicy::new(),
@@ -1541,21 +1467,25 @@ fn make_policy_column<P: StratumRetentionPolicy>(
     HereditaryStratigraphicColumn::from_parts(policy, bit_width, strata, n)
 }
 
-fn packet_round_trip_any<P: StratumRetentionPolicy>(
-    policy: P,
-    bit_width: u8,
-    seed: u64,
-    n: u64,
-) {
+fn packet_round_trip_any<P: StratumRetentionPolicy>(policy: P, bit_width: u8, seed: u64, n: u64) {
     let col = make_policy_column(policy, bit_width, seed, n);
 
     let packet = col_to_packet(&col);
     let restored = col_from_packet(&packet, col.get_policy().clone(), bit_width).unwrap();
 
-    assert_eq!(col.get_num_strata_deposited(), restored.get_num_strata_deposited());
-    assert_eq!(col.get_num_strata_retained(), restored.get_num_strata_retained());
+    assert_eq!(
+        col.get_num_strata_deposited(),
+        restored.get_num_strata_deposited()
+    );
+    assert_eq!(
+        col.get_num_strata_retained(),
+        restored.get_num_strata_retained()
+    );
 
-    for (a, b) in col.iter_retained_strata().zip(restored.iter_retained_strata()) {
+    for (a, b) in col
+        .iter_retained_strata()
+        .zip(restored.iter_retained_strata())
+    {
         assert_eq!(a.rank, b.rank);
         assert_eq!(a.differentia, b.differentia);
     }
@@ -1626,21 +1556,25 @@ fn packet_round_trip_multiple_bit_widths() {
 // ─── Serialization: JSON records round-trip with all policies ───
 
 #[cfg(feature = "serde")]
-fn json_round_trip_any<P: StratumRetentionPolicy>(
-    policy: P,
-    bit_width: u8,
-    seed: u64,
-    n: u64,
-) {
+fn json_round_trip_any<P: StratumRetentionPolicy>(policy: P, bit_width: u8, seed: u64, n: u64) {
     let col = make_policy_column(policy, bit_width, seed, n);
 
     let record = col_to_records(&col);
     let restored = col_from_records(&record, col.get_policy().clone()).unwrap();
 
-    assert_eq!(col.get_num_strata_deposited(), restored.get_num_strata_deposited());
-    assert_eq!(col.get_num_strata_retained(), restored.get_num_strata_retained());
+    assert_eq!(
+        col.get_num_strata_deposited(),
+        restored.get_num_strata_deposited()
+    );
+    assert_eq!(
+        col.get_num_strata_retained(),
+        restored.get_num_strata_retained()
+    );
 
-    for (a, b) in col.iter_retained_strata().zip(restored.iter_retained_strata()) {
+    for (a, b) in col
+        .iter_retained_strata()
+        .zip(restored.iter_retained_strata())
+    {
         assert_eq!(a.rank, b.rank);
         assert_eq!(a.differentia, b.differentia);
     }
@@ -1675,11 +1609,8 @@ fn json_round_trip_multiple_bit_widths() {
 #[cfg(feature = "serde")]
 #[test]
 fn pop_records_round_trip_with_evolution() {
-    let mut ancestor = HereditaryStratigraphicColumn::with_seed(
-        FixedResolutionPolicy::new(5),
-        32,
-        42,
-    );
+    let mut ancestor =
+        HereditaryStratigraphicColumn::with_seed(FixedResolutionPolicy::new(5), 32, 42);
     ancestor.deposit_strata(20);
 
     let mut population: Vec<HereditaryStratigraphicColumn<FixedResolutionPolicy>> = Vec::new();
@@ -1696,8 +1627,14 @@ fn pop_records_round_trip_with_evolution() {
     assert_eq!(restored.len(), 10);
 
     for (orig, rest) in population.iter().zip(restored.iter()) {
-        assert_eq!(orig.get_num_strata_deposited(), rest.get_num_strata_deposited());
-        assert_eq!(orig.get_num_strata_retained(), rest.get_num_strata_retained());
+        assert_eq!(
+            orig.get_num_strata_deposited(),
+            rest.get_num_strata_deposited()
+        );
+        assert_eq!(
+            orig.get_num_strata_retained(),
+            rest.get_num_strata_retained()
+        );
         for (a, b) in orig.iter_retained_strata().zip(rest.iter_retained_strata()) {
             assert_eq!(a.rank, b.rank);
             assert_eq!(a.differentia, b.differentia);
@@ -1719,11 +1656,8 @@ fn pop_records_empty_population() {
 
 #[test]
 fn tree_both_algorithms_50_organisms() {
-    let mut ancestor = HereditaryStratigraphicColumn::with_seed(
-        PerfectResolutionPolicy::new(),
-        64,
-        42,
-    );
+    let mut ancestor =
+        HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy::new(), 64, 42);
     ancestor.deposit_strata(10);
 
     let population: Vec<_> = (0..50)
@@ -1738,12 +1672,25 @@ fn tree_both_algorithms_50_organisms() {
     let df_naive = build_tree(&population, TreeAlgorithm::NaiveTrie, None);
 
     assert_eq!(df_sc.len(), df_naive.len(), "node count mismatch");
-    assert_eq!(df_sc.ancestor_list, df_naive.ancestor_list, "ancestor_list mismatch");
-    assert_eq!(df_sc.origin_time, df_naive.origin_time, "origin_time mismatch");
-    assert_eq!(df_sc.taxon_label, df_naive.taxon_label, "taxon_label mismatch");
+    assert_eq!(
+        df_sc.ancestor_list, df_naive.ancestor_list,
+        "ancestor_list mismatch"
+    );
+    assert_eq!(
+        df_sc.origin_time, df_naive.origin_time,
+        "origin_time mismatch"
+    );
+    assert_eq!(
+        df_sc.taxon_label, df_naive.taxon_label,
+        "taxon_label mismatch"
+    );
 
     // Verify leaf count
-    let leaf_count = df_sc.taxon_label.iter().filter(|l| l.starts_with("taxon_")).count();
+    let leaf_count = df_sc
+        .taxon_label
+        .iter()
+        .filter(|l| l.starts_with("taxon_"))
+        .count();
     assert_eq!(leaf_count, 50);
 }
 
@@ -1751,11 +1698,7 @@ fn tree_both_algorithms_50_organisms() {
 
 #[test]
 fn tree_multiple_divergence_points() {
-    let mut root = HereditaryStratigraphicColumn::with_seed(
-        PerfectResolutionPolicy::new(),
-        64,
-        42,
-    );
+    let mut root = HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy::new(), 64, 42);
     root.deposit_strata(5);
 
     // First branch point: 2 sub-lineages
@@ -1779,7 +1722,11 @@ fn tree_multiple_divergence_points() {
     let population = vec![leaf_a1, leaf_a2, leaf_b1, leaf_b2];
     let df = build_tree(&population, TreeAlgorithm::ShortcutConsolidation, None);
 
-    let leaf_count = df.taxon_label.iter().filter(|l| l.starts_with("taxon_")).count();
+    let leaf_count = df
+        .taxon_label
+        .iter()
+        .filter(|l| l.starts_with("taxon_"))
+        .count();
     assert_eq!(leaf_count, 4);
 
     // All ancestor IDs valid
@@ -1795,11 +1742,7 @@ fn tree_multiple_divergence_points() {
 
 #[test]
 fn tree_deep_ancestry_chain() {
-    let mut col = HereditaryStratigraphicColumn::with_seed(
-        PerfectResolutionPolicy::new(),
-        64,
-        42,
-    );
+    let mut col = HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy::new(), 64, 42);
     col.deposit_strata(100);
 
     // Create leaves at different depths of the same lineage
@@ -1811,7 +1754,11 @@ fn tree_deep_ancestry_chain() {
     }
 
     let df = build_tree(&leaves, TreeAlgorithm::ShortcutConsolidation, None);
-    let leaf_count = df.taxon_label.iter().filter(|l| l.starts_with("taxon_")).count();
+    let leaf_count = df
+        .taxon_label
+        .iter()
+        .filter(|l| l.starts_with("taxon_"))
+        .count();
     assert_eq!(leaf_count, 5);
 
     // Origin times should be non-negative
@@ -1824,11 +1771,8 @@ fn tree_deep_ancestry_chain() {
 
 #[test]
 fn tree_with_fixed_resolution_policy() {
-    let mut ancestor = HereditaryStratigraphicColumn::with_seed(
-        FixedResolutionPolicy::new(5),
-        64,
-        42,
-    );
+    let mut ancestor =
+        HereditaryStratigraphicColumn::with_seed(FixedResolutionPolicy::new(5), 64, 42);
     ancestor.deposit_strata(50);
 
     let population: Vec<_> = (0..10)
@@ -1846,7 +1790,11 @@ fn tree_with_fixed_resolution_policy() {
     assert_eq!(df_sc.len(), df_naive.len());
     assert_eq!(df_sc.ancestor_list, df_naive.ancestor_list);
 
-    let leaf_count = df_sc.taxon_label.iter().filter(|l| l.starts_with("taxon_")).count();
+    let leaf_count = df_sc
+        .taxon_label
+        .iter()
+        .filter(|l| l.starts_with("taxon_"))
+        .count();
     assert_eq!(leaf_count, 10);
 }
 
@@ -1854,11 +1802,8 @@ fn tree_with_fixed_resolution_policy() {
 
 #[test]
 fn tree_custom_taxon_labels() {
-    let mut ancestor = HereditaryStratigraphicColumn::with_seed(
-        PerfectResolutionPolicy::new(),
-        64,
-        42,
-    );
+    let mut ancestor =
+        HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy::new(), 64, 42);
     ancestor.deposit_strata(5);
 
     let population: Vec<_> = (0..5)
@@ -1890,11 +1835,7 @@ fn tree_custom_taxon_labels() {
 
 #[test]
 fn tree_single_organism_both_algorithms() {
-    let mut col = HereditaryStratigraphicColumn::with_seed(
-        PerfectResolutionPolicy::new(),
-        64,
-        42,
-    );
+    let mut col = HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy::new(), 64, 42);
     col.deposit_strata(10);
 
     let population = vec![col];
@@ -2091,11 +2032,7 @@ fn fixture_tree_population_consistency() {
         }
 
         // Build tree with both algorithms
-        let df_sc = build_tree(
-            &population,
-            TreeAlgorithm::ShortcutConsolidation,
-            None,
-        );
+        let df_sc = build_tree(&population, TreeAlgorithm::ShortcutConsolidation, None);
         let df_naive = build_tree(&population, TreeAlgorithm::NaiveTrie, None);
 
         // Both algorithms must produce identical output
@@ -2127,11 +2064,7 @@ fn fixture_tree_population_consistency() {
             .iter()
             .filter(|l| l.starts_with("taxon_"))
             .count();
-        assert_eq!(
-            leaf_count, num_organisms,
-            "{}: leaf count mismatch",
-            name
-        );
+        assert_eq!(leaf_count, num_organisms, "{}: leaf count mismatch", name);
 
         // All ancestor IDs valid
         let ids: std::collections::HashSet<u32> = df_sc.id.iter().copied().collect();

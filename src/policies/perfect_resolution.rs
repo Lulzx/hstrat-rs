@@ -21,19 +21,12 @@ impl Default for PerfectResolutionPolicy {
 }
 
 impl StratumRetentionPolicy for PerfectResolutionPolicy {
-    fn gen_drop_ranks(
-        &self,
-        _num_strata_deposited: u64,
-        _retained_ranks: &[u64],
-    ) -> Vec<u64> {
+    fn gen_drop_ranks(&self, _num_strata_deposited: u64, _retained_ranks: &[u64]) -> Vec<u64> {
         // Never drop anything.
         Vec::new()
     }
 
-    fn iter_retained_ranks(
-        &self,
-        num_strata_deposited: u64,
-    ) -> Box<dyn Iterator<Item = u64> + '_> {
+    fn iter_retained_ranks(&self, num_strata_deposited: u64) -> Box<dyn Iterator<Item = u64> + '_> {
         Box::new(0..num_strata_deposited)
     }
 
@@ -41,11 +34,7 @@ impl StratumRetentionPolicy for PerfectResolutionPolicy {
         num_strata_deposited
     }
 
-    fn calc_rank_at_column_index(
-        &self,
-        index: usize,
-        _num_strata_deposited: u64,
-    ) -> u64 {
+    fn calc_rank_at_column_index(&self, index: usize, _num_strata_deposited: u64) -> u64 {
         index as u64
     }
 
@@ -78,10 +67,7 @@ mod tests {
         let policy = PerfectResolutionPolicy;
         assert_eq!(policy.calc_num_strata_retained_exact(1), 1);
         assert_eq!(policy.gen_drop_ranks(1, &[0]), Vec::<u64>::new());
-        assert_eq!(
-            policy.iter_retained_ranks(1).collect::<Vec<_>>(),
-            vec![0],
-        );
+        assert_eq!(policy.iter_retained_ranks(1).collect::<Vec<_>>(), vec![0],);
         assert_eq!(policy.calc_rank_at_column_index(0, 1), 0);
     }
 
@@ -92,10 +78,7 @@ mod tests {
         assert_eq!(policy.calc_num_strata_retained_exact(n), n);
         let retained: Vec<u64> = (0..n).collect();
         assert_eq!(policy.gen_drop_ranks(n, &retained), Vec::<u64>::new());
-        assert_eq!(
-            policy.iter_retained_ranks(n).collect::<Vec<_>>(),
-            retained,
-        );
+        assert_eq!(policy.iter_retained_ranks(n).collect::<Vec<_>>(), retained,);
         for i in 0..n as usize {
             assert_eq!(policy.calc_rank_at_column_index(i, n), i as u64);
         }

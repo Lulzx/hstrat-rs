@@ -2,8 +2,8 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use super::geometric_seq_nth_root::GeometricSeqNthRootPolicy;
-use super::recency_proportional::RecencyProportionalPolicy;
 use super::r#trait::StratumRetentionPolicy;
+use super::recency_proportional::RecencyProportionalPolicy;
 
 /// Retains strata using a recency-proportional approach with an upper bound
 /// on the number of retained strata.
@@ -30,11 +30,8 @@ impl CurbedRecencyProportionalPolicy {
 ///
 /// Python: `size_curb // (int(n).bit_length() + 1) - 1`
 /// Returns -1 (as `None`) if below threshold (2).
-fn calc_provided_resolution(
-    size_curb: u64,
-    num_strata_deposited: u64,
-) -> Option<u64> {
-    let bit_len = 64 - (num_strata_deposited as u64).leading_zeros() as u64;
+fn calc_provided_resolution(size_curb: u64, num_strata_deposited: u64) -> Option<u64> {
+    let bit_len = 64 - num_strata_deposited.leading_zeros() as u64;
     let res = size_curb / (bit_len + 1);
     if res < 1 {
         return None;
@@ -79,11 +76,7 @@ fn compute_retained_ranks(size_curb: u64, num_strata_deposited: u64) -> Vec<u64>
 }
 
 impl StratumRetentionPolicy for CurbedRecencyProportionalPolicy {
-    fn gen_drop_ranks(
-        &self,
-        num_strata_deposited: u64,
-        retained_ranks: &[u64],
-    ) -> Vec<u64> {
+    fn gen_drop_ranks(&self, num_strata_deposited: u64, retained_ranks: &[u64]) -> Vec<u64> {
         if num_strata_deposited == 0 {
             return Vec::new();
         }
@@ -95,10 +88,7 @@ impl StratumRetentionPolicy for CurbedRecencyProportionalPolicy {
             .collect()
     }
 
-    fn iter_retained_ranks(
-        &self,
-        num_strata_deposited: u64,
-    ) -> Box<dyn Iterator<Item = u64> + '_> {
+    fn iter_retained_ranks(&self, num_strata_deposited: u64) -> Box<dyn Iterator<Item = u64> + '_> {
         let ranks = compute_retained_ranks(self.size_curb, num_strata_deposited);
         Box::new(ranks.into_iter())
     }
@@ -107,11 +97,7 @@ impl StratumRetentionPolicy for CurbedRecencyProportionalPolicy {
         compute_retained_ranks(self.size_curb, num_strata_deposited).len() as u64
     }
 
-    fn calc_rank_at_column_index(
-        &self,
-        index: usize,
-        num_strata_deposited: u64,
-    ) -> u64 {
+    fn calc_rank_at_column_index(&self, index: usize, num_strata_deposited: u64) -> u64 {
         let ranks = compute_retained_ranks(self.size_curb, num_strata_deposited);
         ranks[index]
     }
@@ -124,11 +110,7 @@ impl StratumRetentionPolicy for CurbedRecencyProportionalPolicy {
         if ranks.len() <= 1 {
             return 0;
         }
-        ranks
-            .windows(2)
-            .map(|w| w[1] - w[0])
-            .max()
-            .unwrap_or(0)
+        ranks.windows(2).map(|w| w[1] - w[0]).max().unwrap_or(0)
     }
 
     fn algo_identifier(&self) -> &'static str {

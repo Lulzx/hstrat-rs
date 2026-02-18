@@ -8,27 +8,22 @@ use rayon::prelude::*;
 use crate::column::HereditaryStratigraphicColumn;
 use crate::policies::StratumRetentionPolicy;
 
-use super::trie::{Trie, NaiveTrie};
+use super::trie::{NaiveTrie, Trie};
 
 /// Tree reconstruction algorithm to use.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TreeAlgorithm {
     /// Shortcut-consolidation trie (default, fast path from arXiv:2508.15074).
     /// Near-linear scaling, uses search table for efficient descendant lookup.
+    #[default]
     ShortcutConsolidation,
     /// Naive wildcard trie (legacy fallback).
     /// Same correctness, no shortcut optimization.
     NaiveTrie,
 }
 
-impl Default for TreeAlgorithm {
-    fn default() -> Self {
-        Self::ShortcutConsolidation
-    }
-}
-
 /// Output format matching Python's alifedata standard DataFrame.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct AlifeDataFrame {
     /// Unique node ID for each node in the tree.
     pub id: Vec<u32>,
@@ -43,12 +38,7 @@ pub struct AlifeDataFrame {
 impl AlifeDataFrame {
     /// Create an empty DataFrame.
     pub fn new() -> Self {
-        Self {
-            id: Vec::new(),
-            ancestor_list: Vec::new(),
-            origin_time: Vec::new(),
-            taxon_label: Vec::new(),
-        }
+        Self::default()
     }
 
     /// Number of rows (nodes) in the DataFrame.
@@ -85,12 +75,8 @@ pub fn build_tree<P: StratumRetentionPolicy>(
     }
 
     match algorithm {
-        TreeAlgorithm::ShortcutConsolidation => {
-            build_tree_trie(population, taxon_labels)
-        }
-        TreeAlgorithm::NaiveTrie => {
-            build_tree_naive(population, taxon_labels)
-        }
+        TreeAlgorithm::ShortcutConsolidation => build_tree_trie(population, taxon_labels),
+        TreeAlgorithm::NaiveTrie => build_tree_naive(population, taxon_labels),
     }
 }
 
@@ -205,10 +191,7 @@ fn build_tree_naive<P: StratumRetentionPolicy>(
 ///
 /// Only reachable, non-root nodes are included. The virtual root (node 0)
 /// is excluded; its children become top-level nodes with empty ancestor lists.
-fn trie_to_dataframe(
-    trie: &Trie,
-    taxon_labels: Option<&[String]>,
-) -> AlifeDataFrame {
+fn trie_to_dataframe(trie: &Trie, taxon_labels: Option<&[String]>) -> AlifeDataFrame {
     let mut df = AlifeDataFrame::new();
 
     // BFS from root to find all reachable nodes
@@ -268,10 +251,7 @@ fn trie_to_dataframe(
 }
 
 /// Convert a NaiveTrie into an AlifeDataFrame.
-fn naive_trie_to_dataframe(
-    trie: &NaiveTrie,
-    taxon_labels: Option<&[String]>,
-) -> AlifeDataFrame {
+fn naive_trie_to_dataframe(trie: &NaiveTrie, taxon_labels: Option<&[String]>) -> AlifeDataFrame {
     let mut df = AlifeDataFrame::new();
 
     let mut reachable: Vec<u32> = Vec::new();
@@ -353,8 +333,7 @@ mod tests {
 
     #[test]
     fn empty_population() {
-        let pop: Vec<HereditaryStratigraphicColumn<PerfectResolutionPolicy>> =
-            Vec::new();
+        let pop: Vec<HereditaryStratigraphicColumn<PerfectResolutionPolicy>> = Vec::new();
         let df = build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, None);
         assert!(df.is_empty());
     }
@@ -374,14 +353,8 @@ mod tests {
 
     #[test]
     fn two_siblings_diverge_at_rank_2() {
-        let col_a = make_column(
-            vec![(0, 100), (1, 200), (2, 300), (3, 400), (4, 500)],
-            5,
-        );
-        let col_b = make_column(
-            vec![(0, 100), (1, 200), (2, 300), (3, 999), (4, 888)],
-            5,
-        );
+        let col_a = make_column(vec![(0, 100), (1, 200), (2, 300), (3, 400), (4, 500)], 5);
+        let col_b = make_column(vec![(0, 100), (1, 200), (2, 300), (3, 999), (4, 888)], 5);
 
         let pop = alloc::vec![col_a, col_b];
         let df = build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, None);
@@ -411,18 +384,9 @@ mod tests {
     #[test]
     fn three_organisms_binary_tree() {
         // A and B diverge at rank 1, C diverges from A at rank 2
-        let col_a = make_column(
-            vec![(0, 10), (1, 20), (2, 30), (3, 40)],
-            4,
-        );
-        let col_b = make_column(
-            vec![(0, 10), (1, 99), (2, 88), (3, 77)],
-            4,
-        );
-        let col_c = make_column(
-            vec![(0, 10), (1, 20), (2, 30), (3, 55)],
-            4,
-        );
+        let col_a = make_column(vec![(0, 10), (1, 20), (2, 30), (3, 40)], 4);
+        let col_b = make_column(vec![(0, 10), (1, 99), (2, 88), (3, 77)], 4);
+        let col_c = make_column(vec![(0, 10), (1, 20), (2, 30), (3, 55)], 4);
 
         let pop = alloc::vec![col_a, col_b, col_c];
         let df = build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, None);
@@ -461,10 +425,7 @@ mod tests {
     #[test]
     fn organisms_with_different_depths() {
         let short = make_column(vec![(0, 10), (1, 20)], 2);
-        let long = make_column(
-            vec![(0, 10), (1, 20), (2, 30), (3, 40)],
-            4,
-        );
+        let long = make_column(vec![(0, 10), (1, 20), (2, 30), (3, 40)], 4);
 
         let pop = alloc::vec![short, long];
         let df = build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, None);
@@ -508,15 +469,8 @@ mod tests {
         let col_b = make_column(vec![(0, 10), (1, 99)], 2);
 
         let pop = alloc::vec![col_a, col_b];
-        let labels = alloc::vec![
-            String::from("species_alpha"),
-            String::from("species_beta"),
-        ];
-        let df = build_tree(
-            &pop,
-            TreeAlgorithm::ShortcutConsolidation,
-            Some(&labels),
-        );
+        let labels = alloc::vec![String::from("species_alpha"), String::from("species_beta"),];
+        let df = build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, Some(&labels));
 
         let has_alpha = df.taxon_label.iter().any(|l| l == "species_alpha");
         let has_beta = df.taxon_label.iter().any(|l| l == "species_beta");
@@ -526,14 +480,8 @@ mod tests {
 
     #[test]
     fn naive_trie_same_result() {
-        let col_a = make_column(
-            vec![(0, 100), (1, 200), (2, 300), (3, 400)],
-            4,
-        );
-        let col_b = make_column(
-            vec![(0, 100), (1, 200), (2, 999), (3, 888)],
-            4,
-        );
+        let col_a = make_column(vec![(0, 100), (1, 200), (2, 300), (3, 400)], 4);
+        let col_b = make_column(vec![(0, 100), (1, 200), (2, 999), (3, 888)], 4);
 
         let pop = alloc::vec![col_a, col_b];
         let df_sc = build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, None);
@@ -549,18 +497,9 @@ mod tests {
     #[test]
     fn naive_trie_same_result_complex() {
         // More complex case: 3 organisms with non-trivial branching
-        let col_a = make_column(
-            vec![(0, 10), (1, 20), (2, 30), (3, 40)],
-            4,
-        );
-        let col_b = make_column(
-            vec![(0, 10), (1, 99), (2, 88), (3, 77)],
-            4,
-        );
-        let col_c = make_column(
-            vec![(0, 10), (1, 20), (2, 30), (3, 55)],
-            4,
-        );
+        let col_a = make_column(vec![(0, 10), (1, 20), (2, 30), (3, 40)], 4);
+        let col_b = make_column(vec![(0, 10), (1, 99), (2, 88), (3, 77)], 4);
+        let col_c = make_column(vec![(0, 10), (1, 20), (2, 30), (3, 55)], 4);
 
         let pop = alloc::vec![col_a, col_b, col_c];
         let df_sc = build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, None);
@@ -575,10 +514,7 @@ mod tests {
     #[test]
     fn naive_trie_same_result_different_depths() {
         let short = make_column(vec![(0, 10), (1, 20)], 2);
-        let long = make_column(
-            vec![(0, 10), (1, 20), (2, 30), (3, 40)],
-            4,
-        );
+        let long = make_column(vec![(0, 10), (1, 20), (2, 30), (3, 40)], 4);
 
         let pop = alloc::vec![short, long];
         let df_sc = build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, None);
@@ -593,16 +529,10 @@ mod tests {
     fn gap_in_retained_ranks() {
         // Organism A retains every rank, organism B retains only even ranks
         // They share ancestor with same differentia at common ranks
-        let col_a = make_column(
-            vec![(0, 10), (1, 20), (2, 30), (3, 40), (4, 50)],
-            5,
-        );
+        let col_a = make_column(vec![(0, 10), (1, 20), (2, 30), (3, 40), (4, 50)], 5);
         // B only retains 0, 2, 4 — simulating a different retention policy
         // But shares differentia at 0 and 2 with A, diverges at 4
-        let col_b = make_column(
-            vec![(0, 10), (2, 30), (4, 99)],
-            5,
-        );
+        let col_b = make_column(vec![(0, 10), (2, 30), (4, 99)], 5);
 
         let pop = alloc::vec![col_a, col_b];
         let df = build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, None);
@@ -623,10 +553,7 @@ mod tests {
         // 50 organisms all from same ancestor, each with unique differentia
         let mut pop = Vec::with_capacity(50);
         for i in 0u64..50 {
-            let col = make_column(
-                vec![(0, 42), (1, 100 + i), (2, 200 + i)],
-                3,
-            );
+            let col = make_column(vec![(0, 42), (1, 100 + i), (2, 200 + i)], 3);
             pop.push(col);
         }
 

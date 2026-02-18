@@ -51,8 +51,7 @@ fn compute_retained_ranks(resolution: u64, num_strata_deposited: u64) -> Vec<u64
         calc_provided_uncertainty(guaranteed_resolution, num_strata_deposited);
 
     let prev_stage_uncertainty = cur_stage_uncertainty / 2;
-    let prev_stage_max_idx =
-        (num_strata_deposited - 2) / prev_stage_uncertainty;
+    let prev_stage_max_idx = (num_strata_deposited - 2) / prev_stage_uncertainty;
     // Use i64 arithmetic because the intermediate value can be negative
     // (Python handles this with its arbitrary-precision signed integers)
     let thresh_idx_signed: i64 =
@@ -86,10 +85,10 @@ fn compute_retained_ranks(resolution: u64, num_strata_deposited: u64) -> Vec<u64
     // Possibly append last_rank
     let last_rank = num_strata_deposited - 1;
     if thresh_idx * cur_stage_uncertainty > last_rank {
-        if last_rank > 0 && last_rank % cur_stage_uncertainty != 0 {
+        if last_rank > 0 && !last_rank.is_multiple_of(cur_stage_uncertainty) {
             retained.push(last_rank);
         }
-    } else if last_rank > 0 && last_rank % prev_stage_uncertainty != 0 {
+    } else if last_rank > 0 && !last_rank.is_multiple_of(prev_stage_uncertainty) {
         retained.push(last_rank);
     }
 
@@ -100,17 +99,12 @@ fn compute_retained_ranks(resolution: u64, num_strata_deposited: u64) -> Vec<u64
 }
 
 impl StratumRetentionPolicy for DepthProportionalTaperedPolicy {
-    fn gen_drop_ranks(
-        &self,
-        num_strata_deposited: u64,
-        retained_ranks: &[u64],
-    ) -> Vec<u64> {
+    fn gen_drop_ranks(&self, num_strata_deposited: u64, retained_ranks: &[u64]) -> Vec<u64> {
         if num_strata_deposited <= 1 {
             return Vec::new();
         }
 
-        let target_set =
-            compute_retained_ranks(self.resolution, num_strata_deposited);
+        let target_set = compute_retained_ranks(self.resolution, num_strata_deposited);
 
         // Find strata that are not in the target set.
         let mut non_conforming: Vec<u64> = retained_ranks
@@ -130,35 +124,21 @@ impl StratumRetentionPolicy for DepthProportionalTaperedPolicy {
         }
     }
 
-    fn iter_retained_ranks(
-        &self,
-        num_strata_deposited: u64,
-    ) -> Box<dyn Iterator<Item = u64> + '_> {
+    fn iter_retained_ranks(&self, num_strata_deposited: u64) -> Box<dyn Iterator<Item = u64> + '_> {
         let ranks = compute_retained_ranks(self.resolution, num_strata_deposited);
         Box::new(ranks.into_iter())
     }
 
-    fn calc_num_strata_retained_exact(
-        &self,
-        num_strata_deposited: u64,
-    ) -> u64 {
+    fn calc_num_strata_retained_exact(&self, num_strata_deposited: u64) -> u64 {
         compute_retained_ranks(self.resolution, num_strata_deposited).len() as u64
     }
 
-    fn calc_rank_at_column_index(
-        &self,
-        index: usize,
-        num_strata_deposited: u64,
-    ) -> u64 {
-        let ranks: Vec<u64> =
-            self.iter_retained_ranks(num_strata_deposited).collect();
+    fn calc_rank_at_column_index(&self, index: usize, num_strata_deposited: u64) -> u64 {
+        let ranks: Vec<u64> = self.iter_retained_ranks(num_strata_deposited).collect();
         ranks[index]
     }
 
-    fn calc_mrca_uncertainty_abs_exact(
-        &self,
-        num_strata_deposited: u64,
-    ) -> u64 {
+    fn calc_mrca_uncertainty_abs_exact(&self, num_strata_deposited: u64) -> u64 {
         if num_strata_deposited <= 1 {
             return 0;
         }
@@ -166,11 +146,7 @@ impl StratumRetentionPolicy for DepthProportionalTaperedPolicy {
         if ranks.len() <= 1 {
             return 0;
         }
-        ranks
-            .windows(2)
-            .map(|w| w[1] - w[0])
-            .max()
-            .unwrap_or(0)
+        ranks.windows(2).map(|w| w[1] - w[0]).max().unwrap_or(0)
     }
 
     fn algo_identifier(&self) -> &'static str {
@@ -198,10 +174,7 @@ mod tests {
         let policy = DepthProportionalTaperedPolicy { resolution: 10 };
         assert_eq!(policy.calc_num_strata_retained_exact(1), 1);
         assert_eq!(policy.gen_drop_ranks(1, &[0]), Vec::<u64>::new());
-        assert_eq!(
-            policy.iter_retained_ranks(1).collect::<Vec<_>>(),
-            vec![0],
-        );
+        assert_eq!(policy.iter_retained_ranks(1).collect::<Vec<_>>(), vec![0],);
     }
 
     #[test]
@@ -237,13 +210,8 @@ mod tests {
     fn test_always_retains_first_and_last() {
         let policy = DepthProportionalTaperedPolicy { resolution: 3 };
         for n in 1..200u64 {
-            let retained: Vec<u64> =
-                policy.iter_retained_ranks(n).collect();
-            assert!(
-                retained.contains(&0),
-                "n={}: should retain rank 0",
-                n,
-            );
+            let retained: Vec<u64> = policy.iter_retained_ranks(n).collect();
+            assert!(retained.contains(&0), "n={}: should retain rank 0", n,);
             assert!(
                 retained.contains(&(n - 1)),
                 "n={}: should retain newest rank {}",

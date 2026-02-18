@@ -7,10 +7,7 @@ pub enum HstratError {
     /// Differentia bit width must be in 1..=64.
     InvalidBitWidth(u8),
     /// A policy parameter is invalid.
-    InvalidPolicyParam {
-        param: &'static str,
-        value: i64,
-    },
+    InvalidPolicyParam { param: &'static str, value: i64 },
     /// Deserialization failed.
     DeserializationError(String),
     /// Two columns cannot be compared (incompatible).
@@ -18,10 +15,7 @@ pub enum HstratError {
     /// No common ancestor detected between two columns.
     NoCommonAncestor,
     /// Index out of bounds.
-    IndexOutOfBounds {
-        index: usize,
-        len: usize,
-    },
+    IndexOutOfBounds { index: usize, len: usize },
 }
 
 impl fmt::Display for HstratError {

@@ -43,10 +43,12 @@ fn compute_retained_ranks(resolution: u64, num_strata_deposited: u64) -> Vec<u64
 
     let uncertainty = calc_provided_uncertainty(resolution, num_strata_deposited);
 
-    let mut retained: Vec<u64> = (0..num_strata_deposited).step_by(uncertainty as usize).collect();
+    let mut retained: Vec<u64> = (0..num_strata_deposited)
+        .step_by(uncertainty as usize)
+        .collect();
 
     let last_rank = num_strata_deposited - 1;
-    if last_rank > 0 && last_rank % uncertainty != 0 {
+    if last_rank > 0 && !last_rank.is_multiple_of(uncertainty) {
         retained.push(last_rank);
     }
 
@@ -54,11 +56,7 @@ fn compute_retained_ranks(resolution: u64, num_strata_deposited: u64) -> Vec<u64
 }
 
 impl StratumRetentionPolicy for DepthProportionalPolicy {
-    fn gen_drop_ranks(
-        &self,
-        num_strata_deposited: u64,
-        retained_ranks: &[u64],
-    ) -> Vec<u64> {
+    fn gen_drop_ranks(&self, num_strata_deposited: u64, retained_ranks: &[u64]) -> Vec<u64> {
         if num_strata_deposited == 0 {
             return Vec::new();
         }
@@ -70,10 +68,7 @@ impl StratumRetentionPolicy for DepthProportionalPolicy {
             .collect()
     }
 
-    fn iter_retained_ranks(
-        &self,
-        num_strata_deposited: u64,
-    ) -> Box<dyn Iterator<Item = u64> + '_> {
+    fn iter_retained_ranks(&self, num_strata_deposited: u64) -> Box<dyn Iterator<Item = u64> + '_> {
         let ranks = compute_retained_ranks(self.resolution, num_strata_deposited);
         Box::new(ranks.into_iter())
     }
@@ -82,11 +77,7 @@ impl StratumRetentionPolicy for DepthProportionalPolicy {
         compute_retained_ranks(self.resolution, num_strata_deposited).len() as u64
     }
 
-    fn calc_rank_at_column_index(
-        &self,
-        index: usize,
-        num_strata_deposited: u64,
-    ) -> u64 {
+    fn calc_rank_at_column_index(&self, index: usize, num_strata_deposited: u64) -> u64 {
         let ranks = compute_retained_ranks(self.resolution, num_strata_deposited);
         ranks[index]
     }
@@ -99,11 +90,7 @@ impl StratumRetentionPolicy for DepthProportionalPolicy {
         if ranks.len() <= 1 {
             return 0;
         }
-        ranks
-            .windows(2)
-            .map(|w| w[1] - w[0])
-            .max()
-            .unwrap_or(0)
+        ranks.windows(2).map(|w| w[1] - w[0]).max().unwrap_or(0)
     }
 
     fn algo_identifier(&self) -> &'static str {

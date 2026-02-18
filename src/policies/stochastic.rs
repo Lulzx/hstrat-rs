@@ -30,6 +30,10 @@ impl Default for StochasticPolicy {
 
 impl StochasticPolicy {
     pub fn new(retention_probability: f64) -> Self {
+        assert!(
+            retention_probability.is_finite() && (0.0..=1.0).contains(&retention_probability),
+            "retention_probability must be in 0.0..=1.0"
+        );
         Self {
             retention_probability,
         }
@@ -38,8 +42,7 @@ impl StochasticPolicy {
 
 impl PartialEq for StochasticPolicy {
     fn eq(&self, other: &Self) -> bool {
-        self.retention_probability.to_bits()
-            == other.retention_probability.to_bits()
+        self.retention_probability.to_bits() == other.retention_probability.to_bits()
     }
 }
 
@@ -59,11 +62,7 @@ impl StochasticPolicy {
 }
 
 impl StratumRetentionPolicy for StochasticPolicy {
-    fn gen_drop_ranks(
-        &self,
-        num_strata_deposited: u64,
-        retained_ranks: &[u64],
-    ) -> Vec<u64> {
+    fn gen_drop_ranks(&self, num_strata_deposited: u64, retained_ranks: &[u64]) -> Vec<u64> {
         if num_strata_deposited <= 2 {
             return Vec::new();
         }
@@ -87,10 +86,7 @@ impl StratumRetentionPolicy for StochasticPolicy {
         }
     }
 
-    fn iter_retained_ranks(
-        &self,
-        num_strata_deposited: u64,
-    ) -> Box<dyn Iterator<Item = u64> + '_> {
+    fn iter_retained_ranks(&self, num_strata_deposited: u64) -> Box<dyn Iterator<Item = u64> + '_> {
         if num_strata_deposited == 0 {
             return Box::new(core::iter::empty());
         }
@@ -107,8 +103,7 @@ impl StratumRetentionPolicy for StochasticPolicy {
 
             if dep >= 2 {
                 let second_most_recent = dep - 1;
-                if second_most_recent != 0
-                    && !self.should_retain_deterministic(second_most_recent)
+                if second_most_recent != 0 && !self.should_retain_deterministic(second_most_recent)
                 {
                     retained.retain(|&r| r != second_most_recent);
                 }
@@ -131,13 +126,8 @@ impl StratumRetentionPolicy for StochasticPolicy {
         self.iter_retained_ranks(num_strata_deposited).count() as u64
     }
 
-    fn calc_rank_at_column_index(
-        &self,
-        index: usize,
-        num_strata_deposited: u64,
-    ) -> u64 {
-        let ranks: Vec<u64> =
-            self.iter_retained_ranks(num_strata_deposited).collect();
+    fn calc_rank_at_column_index(&self, index: usize, num_strata_deposited: u64) -> u64 {
+        let ranks: Vec<u64> = self.iter_retained_ranks(num_strata_deposited).collect();
         ranks[index]
     }
 
@@ -145,16 +135,11 @@ impl StratumRetentionPolicy for StochasticPolicy {
         if num_strata_deposited <= 1 {
             return 0;
         }
-        let retained: Vec<u64> =
-            self.iter_retained_ranks(num_strata_deposited).collect();
+        let retained: Vec<u64> = self.iter_retained_ranks(num_strata_deposited).collect();
         if retained.len() <= 1 {
             return num_strata_deposited.saturating_sub(1);
         }
-        retained
-            .windows(2)
-            .map(|w| w[1] - w[0])
-            .max()
-            .unwrap_or(0)
+        retained.windows(2).map(|w| w[1] - w[0]).max().unwrap_or(0)
     }
 
     fn algo_identifier(&self) -> &'static str {
@@ -165,6 +150,18 @@ impl StratumRetentionPolicy for StochasticPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_new_constructor_valid_probability() {
+        let p = StochasticPolicy::new(0.25);
+        assert_eq!(p.retention_probability, 0.25);
+    }
+
+    #[test]
+    #[should_panic(expected = "retention_probability must be in 0.0..=1.0")]
+    fn test_new_constructor_invalid_probability_panics() {
+        let _ = StochasticPolicy::new(1.1);
+    }
 
     #[test]
     fn test_zero_deposited() {
@@ -181,10 +178,7 @@ mod tests {
     fn test_one_deposited() {
         let policy = StochasticPolicy::default();
         assert_eq!(policy.calc_num_strata_retained_exact(1), 1);
-        assert_eq!(
-            policy.iter_retained_ranks(1).collect::<Vec<_>>(),
-            vec![0],
-        );
+        assert_eq!(policy.iter_retained_ranks(1).collect::<Vec<_>>(), vec![0],);
     }
 
     #[test]

@@ -44,18 +44,11 @@ macro_rules! dispatch {
 }
 
 impl StratumRetentionPolicy for DynamicPolicy {
-    fn gen_drop_ranks(
-        &self,
-        num_strata_deposited: u64,
-        retained_ranks: &[u64],
-    ) -> Vec<u64> {
+    fn gen_drop_ranks(&self, num_strata_deposited: u64, retained_ranks: &[u64]) -> Vec<u64> {
         dispatch!(self, gen_drop_ranks, num_strata_deposited, retained_ranks)
     }
 
-    fn iter_retained_ranks(
-        &self,
-        num_strata_deposited: u64,
-    ) -> Box<dyn Iterator<Item = u64> + '_> {
+    fn iter_retained_ranks(&self, num_strata_deposited: u64) -> Box<dyn Iterator<Item = u64> + '_> {
         dispatch!(self, iter_retained_ranks, num_strata_deposited)
     }
 
@@ -63,11 +56,7 @@ impl StratumRetentionPolicy for DynamicPolicy {
         dispatch!(self, calc_num_strata_retained_exact, num_strata_deposited)
     }
 
-    fn calc_rank_at_column_index(
-        &self,
-        index: usize,
-        num_strata_deposited: u64,
-    ) -> u64 {
+    fn calc_rank_at_column_index(&self, index: usize, num_strata_deposited: u64) -> u64 {
         dispatch!(self, calc_rank_at_column_index, index, num_strata_deposited)
     }
 
@@ -215,7 +204,10 @@ mod tests {
         assert_eq!(dp.algo_identifier(), "depth_proportional_resolution_algo");
 
         let dp: DynamicPolicy = DepthProportionalTaperedPolicy::new(5).into();
-        assert_eq!(dp.algo_identifier(), "depth_proportional_resolution_tapered_algo");
+        assert_eq!(
+            dp.algo_identifier(),
+            "depth_proportional_resolution_tapered_algo"
+        );
 
         let dp: DynamicPolicy = PseudostochasticPolicy::new(10).into();
         assert_eq!(dp.algo_identifier(), "pseudostochastic_algo");

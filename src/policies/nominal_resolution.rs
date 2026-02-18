@@ -21,11 +21,7 @@ impl Default for NominalResolutionPolicy {
 }
 
 impl StratumRetentionPolicy for NominalResolutionPolicy {
-    fn gen_drop_ranks(
-        &self,
-        num_strata_deposited: u64,
-        retained_ranks: &[u64],
-    ) -> Vec<u64> {
+    fn gen_drop_ranks(&self, num_strata_deposited: u64, retained_ranks: &[u64]) -> Vec<u64> {
         if num_strata_deposited == 0 {
             return Vec::new();
         }
@@ -37,10 +33,7 @@ impl StratumRetentionPolicy for NominalResolutionPolicy {
             .collect()
     }
 
-    fn iter_retained_ranks(
-        &self,
-        num_strata_deposited: u64,
-    ) -> Box<dyn Iterator<Item = u64> + '_> {
+    fn iter_retained_ranks(&self, num_strata_deposited: u64) -> Box<dyn Iterator<Item = u64> + '_> {
         if num_strata_deposited == 0 {
             Box::new(core::iter::empty())
         } else if num_strata_deposited == 1 {
@@ -58,21 +51,13 @@ impl StratumRetentionPolicy for NominalResolutionPolicy {
         }
     }
 
-    fn calc_rank_at_column_index(
-        &self,
-        index: usize,
-        num_strata_deposited: u64,
-    ) -> u64 {
+    fn calc_rank_at_column_index(&self, index: usize, num_strata_deposited: u64) -> u64 {
         let ranks: Vec<u64> = self.iter_retained_ranks(num_strata_deposited).collect();
         ranks[index]
     }
 
     fn calc_mrca_uncertainty_abs_exact(&self, num_strata_deposited: u64) -> u64 {
-        if num_strata_deposited <= 1 {
-            0
-        } else {
-            num_strata_deposited - 1
-        }
+        num_strata_deposited.saturating_sub(1)
     }
 
     fn algo_identifier(&self) -> &'static str {
@@ -101,10 +86,7 @@ mod tests {
         let policy = NominalResolutionPolicy;
         assert_eq!(policy.calc_num_strata_retained_exact(1), 1);
         assert_eq!(policy.gen_drop_ranks(1, &[0]), Vec::<u64>::new());
-        assert_eq!(
-            policy.iter_retained_ranks(1).collect::<Vec<_>>(),
-            vec![0],
-        );
+        assert_eq!(policy.iter_retained_ranks(1).collect::<Vec<_>>(), vec![0],);
         assert_eq!(policy.calc_rank_at_column_index(0, 1), 0);
         assert_eq!(policy.calc_mrca_uncertainty_abs_exact(1), 0);
     }

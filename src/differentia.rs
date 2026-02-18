@@ -10,12 +10,12 @@ pub struct Differentia(u64);
 impl Differentia {
     /// Create a new differentia, masking to `bit_width` lower bits.
     ///
-    /// # Panics (debug only)
+    /// # Panics
     /// Panics if `bit_width` is 0 or greater than 64.
     #[inline]
     pub fn new(value: u64, bit_width: u8) -> Self {
-        debug_assert!(
-            bit_width >= 1 && bit_width <= 64,
+        assert!(
+            (1..=64).contains(&bit_width),
             "bit_width must be in 1..=64, got {}",
             bit_width
         );
