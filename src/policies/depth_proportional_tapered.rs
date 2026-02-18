@@ -1,6 +1,7 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
+use super::first_sorted_set_difference;
 use super::r#trait::StratumRetentionPolicy;
 use crate::bit_floor;
 
@@ -105,23 +106,9 @@ impl StratumRetentionPolicy for DepthProportionalTaperedPolicy {
         }
 
         let target_set = compute_retained_ranks(self.resolution, num_strata_deposited);
-
-        // Find strata that are not in the target set.
-        let mut non_conforming: Vec<u64> = retained_ranks
-            .iter()
-            .copied()
-            .filter(|r| target_set.binary_search(r).is_err())
-            .collect();
-
-        // Sort ascending so oldest is first.
-        non_conforming.sort_unstable();
-
-        // Tapered: only drop the oldest non-conforming stratum.
-        if let Some(&oldest) = non_conforming.first() {
-            alloc::vec![oldest]
-        } else {
-            Vec::new()
-        }
+        first_sorted_set_difference(retained_ranks, &target_set)
+            .map(|oldest| alloc::vec![oldest])
+            .unwrap_or_default()
     }
 
     fn iter_retained_ranks(&self, num_strata_deposited: u64) -> Box<dyn Iterator<Item = u64> + '_> {

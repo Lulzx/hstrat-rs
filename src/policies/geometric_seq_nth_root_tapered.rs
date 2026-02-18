@@ -1,6 +1,7 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
+use super::first_sorted_set_difference;
 use super::r#trait::StratumRetentionPolicy;
 use crate::bit_floor;
 
@@ -377,21 +378,9 @@ impl StratumRetentionPolicy for GeometricSeqNthRootTaperedPolicy {
 
         let target_set =
             compute_retained_ranks(self.degree, self.interspersal, num_strata_deposited);
-
-        // Find strata not in the target set.
-        let mut non_conforming: Vec<u64> = retained_ranks
-            .iter()
-            .copied()
-            .filter(|r| target_set.binary_search(r).is_err())
-            .collect();
-
-        if non_conforming.is_empty() {
-            return Vec::new();
-        }
-
-        // Tapered: drop only the oldest non-conforming stratum.
-        non_conforming.sort_unstable();
-        alloc::vec![non_conforming[0]]
+        first_sorted_set_difference(retained_ranks, &target_set)
+            .map(|oldest| alloc::vec![oldest])
+            .unwrap_or_default()
     }
 
     fn iter_retained_ranks(&self, num_strata_deposited: u64) -> Box<dyn Iterator<Item = u64> + '_> {

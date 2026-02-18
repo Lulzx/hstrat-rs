@@ -2,6 +2,7 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use super::r#trait::StratumRetentionPolicy;
+use super::sorted_set_difference;
 use crate::bit_floor;
 
 /// Retains strata using a geometric sequence based on the nth-root of the
@@ -124,11 +125,7 @@ impl StratumRetentionPolicy for GeometricSeqNthRootPolicy {
             return Vec::new();
         }
         let keep = compute_retained_ranks(self.degree, self.interspersal, num_strata_deposited);
-        retained_ranks
-            .iter()
-            .copied()
-            .filter(|rank| !keep.contains(rank))
-            .collect()
+        sorted_set_difference(retained_ranks, &keep)
     }
 
     fn iter_retained_ranks(&self, num_strata_deposited: u64) -> Box<dyn Iterator<Item = u64> + '_> {

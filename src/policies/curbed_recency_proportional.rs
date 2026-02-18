@@ -4,6 +4,7 @@ use alloc::vec::Vec;
 use super::geometric_seq_nth_root::GeometricSeqNthRootPolicy;
 use super::r#trait::StratumRetentionPolicy;
 use super::recency_proportional::RecencyProportionalPolicy;
+use super::sorted_set_difference;
 
 /// Retains strata using a recency-proportional approach with an upper bound
 /// on the number of retained strata.
@@ -81,11 +82,7 @@ impl StratumRetentionPolicy for CurbedRecencyProportionalPolicy {
             return Vec::new();
         }
         let keep = compute_retained_ranks(self.size_curb, num_strata_deposited);
-        retained_ranks
-            .iter()
-            .copied()
-            .filter(|rank| !keep.contains(rank))
-            .collect()
+        sorted_set_difference(retained_ranks, &keep)
     }
 
     fn iter_retained_ranks(&self, num_strata_deposited: u64) -> Box<dyn Iterator<Item = u64> + '_> {
