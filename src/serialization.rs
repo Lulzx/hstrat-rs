@@ -196,6 +196,85 @@ fn unpack_differentiae_bytes(bytes: &[u8], bit_width: u8, count: usize) -> Resul
     Ok(result)
 }
 
+// ---------------------------------------------------------------------------
+// Integer serialization
+// ---------------------------------------------------------------------------
+
+/// Serialize a column to a `u128` integer using a sentry-bit encoding.
+///
+/// The encoding is:
+/// 1. Serialize the column to a binary packet (`n` bytes)
+/// 2. Set a sentry bit at position `n * 8` in the result
+/// 3. OR in the packet bytes (big-endian, least-significant end)
+///
+/// The sentry bit allows the byte count to be recovered without a length field.
+/// This is compatible with Python hstrat's `col_to_int()`.
+pub fn col_to_int<P: StratumRetentionPolicy>(
+    column: &HereditaryStratigraphicColumn<P>,
+) -> u128 {
+    col_to_int_with_options(column, DEFAULT_NUM_STRATA_DEPOSITED_BYTE_WIDTH)
+}
+
+/// Serialize with configurable header byte width to a `u128`.
+pub fn col_to_int_with_options<P: StratumRetentionPolicy>(
+    column: &HereditaryStratigraphicColumn<P>,
+    num_strata_deposited_byte_width: usize,
+) -> u128 {
+    let bytes = col_to_packet_with_options(column, num_strata_deposited_byte_width);
+    let n = bytes.len();
+    assert!(
+        n <= 15,
+        "packet length {n} exceeds u128 capacity (max 15 bytes with sentry bit)"
+    );
+    // Sentry bit at position n*8 (indicates the packet length)
+    let mut val: u128 = 1u128 << (n * 8);
+    // Pack bytes big-endian into the lower bits
+    for (i, &b) in bytes.iter().enumerate() {
+        val |= (b as u128) << ((n - 1 - i) * 8);
+    }
+    val
+}
+
+/// Deserialize a column from a `u128` integer (sentry-bit encoding).
+///
+/// `differentia_bit_width` must match the value used when serializing.
+/// Recovers the packet byte count from the sentry bit, then delegates to
+/// `col_from_packet`. Returns an error if the integer is zero or the
+/// decoded packet fails validation.
+pub fn col_from_int<P: StratumRetentionPolicy>(
+    val: u128,
+    policy: P,
+    differentia_bit_width: u8,
+) -> Result<HereditaryStratigraphicColumn<P>> {
+    col_from_int_with_options(val, policy, differentia_bit_width, DEFAULT_NUM_STRATA_DEPOSITED_BYTE_WIDTH)
+}
+
+/// Deserialize with configurable header byte width from a `u128`.
+pub fn col_from_int_with_options<P: StratumRetentionPolicy>(
+    val: u128,
+    policy: P,
+    differentia_bit_width: u8,
+    num_strata_deposited_byte_width: usize,
+) -> Result<HereditaryStratigraphicColumn<P>> {
+    if val == 0 {
+        return Err(HstratError::DeserializationError(
+            "col_from_int: value is 0 (no sentry bit)".into(),
+        ));
+    }
+
+    // The sentry bit is the highest set bit; its position = n*8
+    let n_bits = 128 - val.leading_zeros() as usize;
+    // n_bits - 1 = position of sentry bit = n * 8
+    let n = (n_bits - 1) / 8; // byte count of the packet
+
+    let mut bytes = alloc::vec![0u8; n];
+    for i in 0..n {
+        bytes[n - 1 - i] = ((val >> (i * 8)) & 0xFF) as u8;
+    }
+
+    col_from_packet_with_options(&bytes, policy, differentia_bit_width, num_strata_deposited_byte_width)
+}
+
 /// Serialize a column to a JSON-compatible record.
 #[cfg(feature = "serde")]
 pub fn col_to_records<P: StratumRetentionPolicy>(
@@ -532,6 +611,57 @@ mod tests {
         let packet = col_to_packet(&col);
         let result = col_from_packet(&packet, PerfectResolutionPolicy, 0);
         assert!(matches!(result, Err(HstratError::InvalidBitWidth(0))));
+    }
+
+    #[test]
+    fn col_to_int_round_trip() {
+        // Use 1-bit differentia + NominalResolutionPolicy (only 2 strata retained)
+        // to keep packet well under 15 bytes.
+        let mut col =
+            HereditaryStratigraphicColumn::with_seed(NominalResolutionPolicy, 1, 42);
+        col.deposit_strata(10);
+        let val = col_to_int(&col);
+        let restored = col_from_int(val, NominalResolutionPolicy, 1).unwrap();
+        assert_eq!(col.get_num_strata_deposited(), restored.get_num_strata_deposited());
+        for (a, b) in col.iter_retained_strata().zip(restored.iter_retained_strata()) {
+            assert_eq!(a.rank, b.rank);
+            assert_eq!(a.differentia, b.differentia);
+        }
+    }
+
+    #[test]
+    fn col_to_int_sentry_bit_correct() {
+        // NominalResolutionPolicy with 1-bit differentia → tiny packet
+        let mut col =
+            HereditaryStratigraphicColumn::with_seed(NominalResolutionPolicy, 1, 42);
+        col.deposit_strata(5);
+        let bytes = col_to_packet(&col);
+        let n = bytes.len();
+        assert!(n <= 15, "packet {n} bytes, too large for u128 sentry test");
+        let val = col_to_int(&col);
+        // Sentry bit is at position n*8
+        let sentry = 1u128 << (n * 8);
+        assert_ne!(val & sentry, 0, "sentry bit must be set");
+        // No bits above the sentry
+        if n * 8 < 127 {
+            let above = !((sentry << 1).wrapping_sub(1));
+            assert_eq!(val & above, 0, "no bits above sentry");
+        }
+    }
+
+    #[test]
+    fn col_from_int_zero_errors() {
+        let result = col_from_int(0u128, NominalResolutionPolicy, 1);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn col_to_int_empty_column() {
+        let col =
+            HereditaryStratigraphicColumn::with_seed(NominalResolutionPolicy, 1, 42);
+        let val = col_to_int(&col);
+        let restored = col_from_int(val, NominalResolutionPolicy, 1).unwrap();
+        assert_eq!(restored.get_num_strata_deposited(), 0);
     }
 
     #[test]

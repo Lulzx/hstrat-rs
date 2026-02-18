@@ -16,6 +16,9 @@ pub struct Trie {
     pub is_leaf: Vec<bool>,
     pub taxon_id: Vec<Option<u32>>,
     pub children: Vec<Vec<u32>>,
+    /// Estimated origin time for each node (default: `rank as f64`).
+    /// Postprocessors may overwrite these values before tree export.
+    pub origin_time: Vec<f64>,
     /// rank -> differentia -> [inner node indices]
     search_table: BTreeMap<u64, BTreeMap<u64, Vec<u32>>>,
 }
@@ -36,6 +39,7 @@ impl Trie {
             is_leaf: alloc::vec![false],
             taxon_id: alloc::vec![None],
             children: alloc::vec![Vec::new()],
+            origin_time: alloc::vec![0.0], // virtual root origin_time
             search_table: BTreeMap::new(),
         }
     }
@@ -69,6 +73,7 @@ impl Trie {
         self.is_leaf.push(is_leaf);
         self.taxon_id.push(taxon);
         self.children.push(Vec::new());
+        self.origin_time.push(rank as f64);
         self.children[parent_idx as usize].push(idx);
 
         if !is_leaf {

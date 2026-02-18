@@ -279,7 +279,7 @@ fn build_tree(
 
     let cols: Vec<_> = population.iter().map(|p| p.inner.clone()).collect();
     let labels_ref = taxon_labels.as_deref();
-    let df = crate::reconstruction::build_tree(&cols, algo, labels_ref);
+    let df = crate::reconstruction::build_tree(&cols, algo, labels_ref, None);
 
     let dict = PyDict::new(py);
     dict.set_item("id", df.id)?;

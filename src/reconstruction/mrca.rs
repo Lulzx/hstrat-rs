@@ -122,6 +122,77 @@ where
     Some((newest_a - lower, newest_b - lower))
 }
 
+// ---------------------------------------------------------------------------
+// Population-level functions
+// ---------------------------------------------------------------------------
+
+/// Calculate MRCA bounds for an entire population (all-pairs minimum).
+///
+/// Computes pairwise bounds for all pairs `(a, b)` in the population and
+/// takes the most restrictive (minimum lower, minimum upper). Returns `None`
+/// if any pair has no common ancestor, or if the resulting `lo > hi`.
+///
+/// # Arguments
+/// * `population` — slice of columns; must contain at least 2 elements
+/// * `confidence_level` — forwarded to `calc_rank_of_mrca_bounds_between`
+///   (currently unused in the pairwise call, retained for API symmetry)
+pub fn calc_rank_of_mrca_bounds_among<P>(
+    population: &[HereditaryStratigraphicColumn<P>],
+    _confidence_level: f64,
+) -> Option<(u64, u64)>
+where
+    P: StratumRetentionPolicy,
+{
+    if population.len() < 2 {
+        return None;
+    }
+
+    let mut lo = u64::MAX;
+    let mut hi = u64::MAX;
+
+    for i in 0..population.len() {
+        for j in (i + 1)..population.len() {
+            let (pair_lo, pair_hi) =
+                calc_rank_of_mrca_bounds_between(&population[i], &population[j])?;
+            lo = lo.min(pair_lo);
+            hi = hi.min(pair_hi);
+        }
+    }
+
+    if lo > hi {
+        return None;
+    }
+    Some((lo, hi))
+}
+
+/// Uncertainty of MRCA bounds for an entire population.
+///
+/// Returns `hi - lo` from `calc_rank_of_mrca_bounds_among`, or `None`.
+pub fn calc_rank_of_mrca_uncertainty_among<P>(
+    population: &[HereditaryStratigraphicColumn<P>],
+    confidence_level: f64,
+) -> Option<u64>
+where
+    P: StratumRetentionPolicy,
+{
+    let (lo, hi) = calc_rank_of_mrca_bounds_among(population, confidence_level)?;
+    Some(hi - lo)
+}
+
+/// Whether all columns in the population share a common ancestor.
+///
+/// Returns `Some(true)` if bounds exist, `None` if any pair has no common
+/// ancestor (treated as unknown rather than false).
+pub fn does_share_any_common_ancestor_among<P>(
+    population: &[HereditaryStratigraphicColumn<P>],
+    confidence_level: f64,
+) -> Option<bool>
+where
+    P: StratumRetentionPolicy,
+{
+    calc_rank_of_mrca_bounds_among(population, confidence_level).map(|_| true)
+}
+
 /// Compute the intersection of two columns' retained rank sets via merge-scan.
 fn intersect_retained_ranks<P1, P2>(
     a: &HereditaryStratigraphicColumn<P1>,

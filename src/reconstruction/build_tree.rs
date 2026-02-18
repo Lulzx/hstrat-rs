@@ -8,6 +8,7 @@ use rayon::prelude::*;
 use crate::column::HereditaryStratigraphicColumn;
 use crate::policies::StratumRetentionPolicy;
 
+use super::postprocessors::{AssignOriginTimeNodeRankPostprocessor, TriePostprocessor};
 use super::trie::{NaiveTrie, Trie};
 
 /// Tree reconstruction algorithm to use.
@@ -62,6 +63,8 @@ impl AlifeDataFrame {
 /// * `population` — slice of columns representing the extant population
 /// * `algorithm` — which tree-building algorithm to use
 /// * `taxon_labels` — optional labels for each organism
+/// * `postprocessor` — optional postprocessor applied to the trie before export;
+///   `None` defaults to `AssignOriginTimeNodeRankPostprocessor`
 ///
 /// # Returns
 /// An `AlifeDataFrame` containing the reconstructed tree.
@@ -69,13 +72,16 @@ pub fn build_tree<P: StratumRetentionPolicy>(
     population: &[HereditaryStratigraphicColumn<P>],
     algorithm: TreeAlgorithm,
     taxon_labels: Option<&[String]>,
+    postprocessor: Option<&dyn TriePostprocessor>,
 ) -> AlifeDataFrame {
     if population.is_empty() {
         return AlifeDataFrame::new();
     }
 
     match algorithm {
-        TreeAlgorithm::ShortcutConsolidation => build_tree_trie(population, taxon_labels),
+        TreeAlgorithm::ShortcutConsolidation => {
+            build_tree_trie(population, taxon_labels, postprocessor)
+        }
         TreeAlgorithm::NaiveTrie => build_tree_naive(population, taxon_labels),
     }
 }
@@ -93,6 +99,7 @@ pub fn build_tree<P: StratumRetentionPolicy>(
 fn build_tree_trie<P: StratumRetentionPolicy>(
     population: &[HereditaryStratigraphicColumn<P>],
     taxon_labels: Option<&[String]>,
+    postprocessor: Option<&dyn TriePostprocessor>,
 ) -> AlifeDataFrame {
     // Sort population indices by depth ascending (ties broken by index)
     let mut indices: Vec<usize> = (0..population.len()).collect();
@@ -134,6 +141,13 @@ fn build_tree_trie<P: StratumRetentionPolicy>(
 
     // Collapse single-child inner nodes to simplify the tree
     trie.collapse_unifurcations();
+
+    // Apply postprocessor (default: assign origin_time = rank)
+    let default_pp = AssignOriginTimeNodeRankPostprocessor;
+    let pp: &dyn TriePostprocessor = postprocessor.unwrap_or(&default_pp);
+    // p_collision is 0.0 here since we don't have per-column bit width easily;
+    // postprocessors that need it should receive it via their own fields.
+    pp.process(&mut trie, 0.0);
 
     trie_to_dataframe(&trie, taxon_labels)
 }
@@ -229,7 +243,7 @@ fn trie_to_dataframe(trie: &Trie, taxon_labels: Option<&[String]>) -> AlifeDataF
             df.ancestor_list.push(Vec::new());
         }
 
-        df.origin_time.push(trie.rank[node as usize] as f64);
+        df.origin_time.push(trie.origin_time[node as usize]);
 
         // Taxon label
         if let Some(taxon) = trie.taxon_id[node as usize] {
@@ -334,7 +348,7 @@ mod tests {
     #[test]
     fn empty_population() {
         let pop: Vec<HereditaryStratigraphicColumn<PerfectResolutionPolicy>> = Vec::new();
-        let df = build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, None);
+        let df = build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, None, None);
         assert!(df.is_empty());
     }
 
@@ -342,7 +356,7 @@ mod tests {
     fn single_organism() {
         let col = make_column(vec![(0, 10), (1, 20), (2, 30)], 3);
         let pop = alloc::vec![col];
-        let df = build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, None);
+        let df = build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, None, None);
 
         // Single organism → 1 leaf node (inner nodes collapsed away)
         assert_eq!(df.len(), 1);
@@ -357,7 +371,7 @@ mod tests {
         let col_b = make_column(vec![(0, 100), (1, 200), (2, 300), (3, 999), (4, 888)], 5);
 
         let pop = alloc::vec![col_a, col_b];
-        let df = build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, None);
+        let df = build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, None, None);
 
         // Expected: 1 inner node (branch at rank 2) + 2 leaves = 3 nodes
         assert_eq!(df.len(), 3);
@@ -389,7 +403,7 @@ mod tests {
         let col_c = make_column(vec![(0, 10), (1, 20), (2, 30), (3, 55)], 4);
 
         let pop = alloc::vec![col_a, col_b, col_c];
-        let df = build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, None);
+        let df = build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, None, None);
 
         // Expected: root branch at rank 0, sub-branch at rank 2
         // Structure: inner(rank 0) -> {leaf_B(rank 3), inner(rank 2) -> {leaf_A, leaf_C}}
@@ -409,7 +423,7 @@ mod tests {
         let col_b = make_column(vec![(0, 10), (1, 20), (2, 30)], 3);
 
         let pop = alloc::vec![col_a, col_b];
-        let df = build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, None);
+        let df = build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, None, None);
 
         // Both organisms share the exact same path; they become sibling leaves
         // under the deepest inner node (rank 2)
@@ -428,7 +442,7 @@ mod tests {
         let long = make_column(vec![(0, 10), (1, 20), (2, 30), (3, 40)], 4);
 
         let pop = alloc::vec![short, long];
-        let df = build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, None);
+        let df = build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, None, None);
 
         // Short ends at rank 1, long continues to rank 3
         // After trie build: shared path at (0,10) and (1,20)
@@ -449,7 +463,7 @@ mod tests {
         let col_b = make_column(vec![(0, 222), (1, 30)], 2);
 
         let pop = alloc::vec![col_a, col_b];
-        let df = build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, None);
+        let df = build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, None, None);
 
         // Two separate subtrees, both rooted at virtual root
         let leaves: Vec<usize> = (0..df.len())
@@ -470,7 +484,7 @@ mod tests {
 
         let pop = alloc::vec![col_a, col_b];
         let labels = alloc::vec![String::from("species_alpha"), String::from("species_beta"),];
-        let df = build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, Some(&labels));
+        let df = build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, Some(&labels), None);
 
         let has_alpha = df.taxon_label.iter().any(|l| l == "species_alpha");
         let has_beta = df.taxon_label.iter().any(|l| l == "species_beta");
@@ -484,8 +498,8 @@ mod tests {
         let col_b = make_column(vec![(0, 100), (1, 200), (2, 999), (3, 888)], 4);
 
         let pop = alloc::vec![col_a, col_b];
-        let df_sc = build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, None);
-        let df_naive = build_tree(&pop, TreeAlgorithm::NaiveTrie, None);
+        let df_sc = build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, None, None);
+        let df_naive = build_tree(&pop, TreeAlgorithm::NaiveTrie, None, None);
 
         // Both algorithms should produce identical topology
         assert_eq!(df_sc.len(), df_naive.len());
@@ -502,8 +516,8 @@ mod tests {
         let col_c = make_column(vec![(0, 10), (1, 20), (2, 30), (3, 55)], 4);
 
         let pop = alloc::vec![col_a, col_b, col_c];
-        let df_sc = build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, None);
-        let df_naive = build_tree(&pop, TreeAlgorithm::NaiveTrie, None);
+        let df_sc = build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, None, None);
+        let df_naive = build_tree(&pop, TreeAlgorithm::NaiveTrie, None, None);
 
         assert_eq!(df_sc.len(), df_naive.len());
         assert_eq!(df_sc.origin_time, df_naive.origin_time);
@@ -517,8 +531,8 @@ mod tests {
         let long = make_column(vec![(0, 10), (1, 20), (2, 30), (3, 40)], 4);
 
         let pop = alloc::vec![short, long];
-        let df_sc = build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, None);
-        let df_naive = build_tree(&pop, TreeAlgorithm::NaiveTrie, None);
+        let df_sc = build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, None, None);
+        let df_naive = build_tree(&pop, TreeAlgorithm::NaiveTrie, None, None);
 
         assert_eq!(df_sc.len(), df_naive.len());
         assert_eq!(df_sc.origin_time, df_naive.origin_time);
@@ -535,7 +549,7 @@ mod tests {
         let col_b = make_column(vec![(0, 10), (2, 30), (4, 99)], 5);
 
         let pop = alloc::vec![col_a, col_b];
-        let df = build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, None);
+        let df = build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, None, None);
 
         // A creates path: 0→1→2→3→4→leaf_A
         // B matches at 0, skips 1 (finds descendant at 2 with diff 30), matches
@@ -557,7 +571,7 @@ mod tests {
             pop.push(col);
         }
 
-        let df = build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, None);
+        let df = build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, None, None);
 
         // All share rank 0 → branch at rank 0 into 50 subtrees
         let leaves: Vec<usize> = (0..df.len())

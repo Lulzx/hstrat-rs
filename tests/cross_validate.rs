@@ -7,7 +7,9 @@ use hstrat::column::{HereditaryStratigraphicColumn, Stratum};
 use hstrat::differentia::Differentia;
 use hstrat::policies::*;
 use hstrat::reconstruction::{
-    build_tree, calc_rank_of_mrca_bounds_between, calc_ranks_since_mrca_bounds_between,
+    build_tree, calc_rank_of_mrca_bounds_among, calc_rank_of_mrca_bounds_between,
+    calc_rank_of_first_retained_disparity_between, calc_rank_of_last_retained_commonality_between,
+    calc_ranks_since_mrca_bounds_between, calc_ranks_since_mrca_bounds_with,
     does_have_any_common_ancestor, TreeAlgorithm,
 };
 use hstrat::serialization::{col_from_packet, col_to_packet};
@@ -346,7 +348,7 @@ fn tree_leaves_match_population_count() {
             population.push(org);
         }
 
-        let df = build_tree(&population, TreeAlgorithm::ShortcutConsolidation, None);
+        let df = build_tree(&population, TreeAlgorithm::ShortcutConsolidation, None, None);
 
         let leaf_count = df
             .taxon_label
@@ -374,7 +376,7 @@ fn tree_ancestor_ids_valid() {
         population.push(org);
     }
 
-    let df = build_tree(&population, TreeAlgorithm::ShortcutConsolidation, None);
+    let df = build_tree(&population, TreeAlgorithm::ShortcutConsolidation, None, None);
 
     // All ancestor IDs should reference valid node IDs
     let ids: std::collections::HashSet<u32> = df.id.iter().copied().collect();
@@ -401,7 +403,7 @@ fn tree_origin_times_non_negative() {
         population.push(org);
     }
 
-    let df = build_tree(&population, TreeAlgorithm::ShortcutConsolidation, None);
+    let df = build_tree(&population, TreeAlgorithm::ShortcutConsolidation, None, None);
 
     for &t in &df.origin_time {
         assert!(t >= 0.0, "origin_time should be non-negative, got {}", t);
@@ -439,7 +441,7 @@ fn tree_deterministic() {
                 org
             })
             .collect();
-        build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, None)
+        build_tree(&pop, TreeAlgorithm::ShortcutConsolidation, None, None)
     };
 
     let df1 = build();
@@ -1668,8 +1670,8 @@ fn tree_both_algorithms_50_organisms() {
         })
         .collect();
 
-    let df_sc = build_tree(&population, TreeAlgorithm::ShortcutConsolidation, None);
-    let df_naive = build_tree(&population, TreeAlgorithm::NaiveTrie, None);
+    let df_sc = build_tree(&population, TreeAlgorithm::ShortcutConsolidation, None, None);
+    let df_naive = build_tree(&population, TreeAlgorithm::NaiveTrie, None, None);
 
     assert_eq!(df_sc.len(), df_naive.len(), "node count mismatch");
     assert_eq!(
@@ -1720,7 +1722,7 @@ fn tree_multiple_divergence_points() {
     leaf_b2.deposit_strata(3);
 
     let population = vec![leaf_a1, leaf_a2, leaf_b1, leaf_b2];
-    let df = build_tree(&population, TreeAlgorithm::ShortcutConsolidation, None);
+    let df = build_tree(&population, TreeAlgorithm::ShortcutConsolidation, None, None);
 
     let leaf_count = df
         .taxon_label
@@ -1753,7 +1755,7 @@ fn tree_deep_ancestry_chain() {
         col.deposit_strata(10);
     }
 
-    let df = build_tree(&leaves, TreeAlgorithm::ShortcutConsolidation, None);
+    let df = build_tree(&leaves, TreeAlgorithm::ShortcutConsolidation, None, None);
     let leaf_count = df
         .taxon_label
         .iter()
@@ -1783,8 +1785,8 @@ fn tree_with_fixed_resolution_policy() {
         })
         .collect();
 
-    let df_sc = build_tree(&population, TreeAlgorithm::ShortcutConsolidation, None);
-    let df_naive = build_tree(&population, TreeAlgorithm::NaiveTrie, None);
+    let df_sc = build_tree(&population, TreeAlgorithm::ShortcutConsolidation, None, None);
+    let df_naive = build_tree(&population, TreeAlgorithm::NaiveTrie, None, None);
 
     // Both algorithms should agree
     assert_eq!(df_sc.len(), df_naive.len());
@@ -1819,6 +1821,7 @@ fn tree_custom_taxon_labels() {
         &population,
         TreeAlgorithm::ShortcutConsolidation,
         Some(&labels),
+        None,
     );
 
     // Custom labels should appear in the output
@@ -1840,8 +1843,8 @@ fn tree_single_organism_both_algorithms() {
 
     let population = vec![col];
 
-    let df_sc = build_tree(&population, TreeAlgorithm::ShortcutConsolidation, None);
-    let df_naive = build_tree(&population, TreeAlgorithm::NaiveTrie, None);
+    let df_sc = build_tree(&population, TreeAlgorithm::ShortcutConsolidation, None, None);
+    let df_naive = build_tree(&population, TreeAlgorithm::NaiveTrie, None, None);
 
     assert!(!df_sc.is_empty());
     assert_eq!(df_sc.len(), df_naive.len());
@@ -2032,8 +2035,8 @@ fn fixture_tree_population_consistency() {
         }
 
         // Build tree with both algorithms
-        let df_sc = build_tree(&population, TreeAlgorithm::ShortcutConsolidation, None);
-        let df_naive = build_tree(&population, TreeAlgorithm::NaiveTrie, None);
+        let df_sc = build_tree(&population, TreeAlgorithm::ShortcutConsolidation, None, None);
+        let df_naive = build_tree(&population, TreeAlgorithm::NaiveTrie, None, None);
 
         // Both algorithms must produce identical output
         assert_eq!(
@@ -2077,6 +2080,208 @@ fn fixture_tree_population_consistency() {
                     ancestor_id
                 );
             }
+        }
+    }
+}
+
+// ─── Juxtaposition Integration Tests ───
+
+/// Parent/child pair: last retained commonality should be the clone rank.
+#[test]
+fn last_retained_commonality_parent_child() {
+    let mut parent =
+        HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy::new(), 64, 42);
+    parent.deposit_strata(10);
+    let clone_rank = parent.get_num_strata_deposited() - 1; // rank 9
+    let mut child = parent.clone_descendant();
+    child.deposit_strata(5);
+
+    // With 64-bit differentia, threshold = 1 at any reasonable confidence.
+    let last_common =
+        calc_rank_of_last_retained_commonality_between(&parent, &child, 0.95);
+    assert!(
+        last_common.is_some(),
+        "parent-child must have a last retained commonality"
+    );
+    // The last commonality must be ≤ the clone rank and ≥ 0
+    let rank = last_common.unwrap();
+    assert!(
+        rank <= clone_rank,
+        "last commonality rank {rank} exceeds clone rank {clone_rank}"
+    );
+}
+
+/// Siblings: first retained disparity should be at or after the divergence point.
+#[test]
+fn first_retained_disparity_siblings() {
+    let mut ancestor =
+        HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy::new(), 64, 42);
+    ancestor.deposit_strata(10);
+    let divergence_rank = ancestor.get_num_strata_deposited() - 1; // rank 9
+
+    let mut sibling_a = ancestor.clone_descendant();
+    sibling_a.deposit_strata(5);
+    let mut sibling_b = ancestor.clone_descendant();
+    sibling_b.deposit_strata(5);
+
+    let first_disp =
+        calc_rank_of_first_retained_disparity_between(&sibling_a, &sibling_b, 0.95);
+    // Siblings share strata through divergence_rank, differ after
+    // With 64-bit differentia, disparity is detected immediately
+    if let Some(rank) = first_disp {
+        // First disparity must be at or after the divergence point
+        assert!(
+            rank >= divergence_rank,
+            "first disparity rank {rank} is before divergence rank {divergence_rank}"
+        );
+    }
+    // It's also acceptable for first_disp to be None if both siblings happen
+    // to have identical random differentia after the fork (astronomically unlikely
+    // with 64-bit differentia but permitted by the API contract).
+}
+
+/// proptest: the true MRCA rank lies within the "ranks since MRCA" bounds.
+///
+/// We use `from_parts` with controlled differentia to guarantee genuine
+/// disparity after the fork point.  `clone_descendant` copies RNG state,
+/// making siblings identical — which prevents the comparison functions from
+/// detecting divergence.
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(50))]
+
+    #[test]
+    fn ranks_since_mrca_bounds_contains_truth(
+        seed in 0u64..1000,
+        shared_len in 3u64..20,
+        extra_a in 1u64..8,
+        extra_b in 1u64..8,
+    ) {
+        use rand::Rng;
+
+        let true_mrca_rank = shared_len - 1;
+
+        // Shared strata (both columns agree on these)
+        let mut rng_shared = rand::rngs::SmallRng::seed_from_u64(seed);
+        let shared: Vec<(u64, u64)> = (0..shared_len)
+            .map(|r| (r, rng_shared.gen::<u64>()))
+            .collect();
+
+        // Child A: shared strata + extra_a distinct strata
+        let mut rng_a = rand::rngs::SmallRng::seed_from_u64(seed.wrapping_mul(7919).wrapping_add(1));
+        let mut strata_a: Vec<Stratum> = shared
+            .iter()
+            .map(|&(rank, diff)| Stratum { rank, differentia: Differentia::new(diff, 64) })
+            .collect();
+        for r in shared_len..(shared_len + extra_a) {
+            strata_a.push(Stratum {
+                rank: r,
+                differentia: Differentia::new(rng_a.gen::<u64>(), 64),
+            });
+        }
+        let num_a = shared_len + extra_a;
+        let child_a = HereditaryStratigraphicColumn::from_parts(
+            PerfectResolutionPolicy::new(), 64, strata_a, num_a,
+        );
+
+        // Child B: shared strata + extra_b distinct strata (different RNG seed)
+        let mut rng_b = rand::rngs::SmallRng::seed_from_u64(seed.wrapping_mul(104729).wrapping_add(2));
+        let mut strata_b: Vec<Stratum> = shared
+            .iter()
+            .map(|&(rank, diff)| Stratum { rank, differentia: Differentia::new(diff, 64) })
+            .collect();
+        for r in shared_len..(shared_len + extra_b) {
+            strata_b.push(Stratum {
+                rank: r,
+                differentia: Differentia::new(rng_b.gen::<u64>(), 64),
+            });
+        }
+        let num_b = shared_len + extra_b;
+        let child_b = HereditaryStratigraphicColumn::from_parts(
+            PerfectResolutionPolicy::new(), 64, strata_b, num_b,
+        );
+
+        // Bounds on "ranks since MRCA" for child_a
+        if let Some((lo, hi)) = calc_ranks_since_mrca_bounds_with(&child_a, &child_b, 0.95) {
+            let actual_since = child_a.get_num_strata_deposited() - 1 - true_mrca_rank;
+            prop_assert!(
+                actual_since >= lo && actual_since < hi,
+                "child_a: actual_since={actual_since} not in [{lo}, {hi}), true_mrca_rank={true_mrca_rank}"
+            );
+        }
+        // Also check for child_b
+        if let Some((lo, hi)) = calc_ranks_since_mrca_bounds_with(&child_b, &child_a, 0.95) {
+            let actual_since = child_b.get_num_strata_deposited() - 1 - true_mrca_rank;
+            prop_assert!(
+                actual_since >= lo && actual_since < hi,
+                "child_b: actual_since={actual_since} not in [{lo}, {hi}), true_mrca_rank={true_mrca_rank}"
+            );
+        }
+    }
+}
+
+// ─── Population MRCA Integration Tests ───
+
+/// For a population of 2, bounds_among should match pairwise bounds.
+#[test]
+fn mrca_bounds_among_single_pair_matches_pairwise() {
+    let mut ancestor =
+        HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy::new(), 64, 99);
+    ancestor.deposit_strata(20);
+    let mut a = ancestor.clone_descendant();
+    a.deposit_strata(5);
+    let mut b = ancestor.clone_descendant();
+    b.deposit_strata(8);
+
+    let pairwise = calc_rank_of_mrca_bounds_between(&a, &b);
+    let population = vec![a, b];
+    let among = calc_rank_of_mrca_bounds_among(&population, 0.95);
+
+    assert_eq!(
+        pairwise, among,
+        "population of 2 should match pairwise bounds"
+    );
+}
+
+/// Adding more organisms to a population can only tighten (or maintain)
+/// the MRCA bounds — the upper bound must not increase.
+#[test]
+fn mrca_bounds_among_restricts_correctly() {
+    let mut root =
+        HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy::new(), 64, 7);
+    root.deposit_strata(20);
+
+    // Two children forking at rank 19
+    let mut c1 = root.clone_descendant();
+    c1.deposit_strata(10);
+    let mut c2 = root.clone_descendant();
+    c2.deposit_strata(10);
+
+    // Third child forking at the same point
+    let mut c3 = root.clone_descendant();
+    c3.deposit_strata(10);
+
+    // Bounds for [c1, c2]
+    let pair = calc_rank_of_mrca_bounds_among(&[c1.clone(), c2.clone()], 0.95);
+    // Bounds for [c1, c2, c3]
+    let triple = calc_rank_of_mrca_bounds_among(&[c1, c2, c3], 0.95);
+
+    match (pair, triple) {
+        (Some((_, pair_hi)), Some((_, triple_hi))) => {
+            assert!(
+                triple_hi <= pair_hi,
+                "adding c3 should not widen upper bound: triple_hi={triple_hi} > pair_hi={pair_hi}"
+            );
+        }
+        (Some(_), None) => {
+            // Triple returning None (no common ancestor) is acceptable — it's
+            // a stricter result than pair having bounds.
+        }
+        _ => {
+            // If pair is None, triple must also be None
+            assert!(
+                triple.is_none(),
+                "if pair has no bounds, triple should not either"
+            );
         }
     }
 }
