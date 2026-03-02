@@ -311,6 +311,158 @@ where
 }
 
 // ---------------------------------------------------------------------------
+// "Definitive" aliases (confidence_level = 0.49 → threshold = 1)
+// ---------------------------------------------------------------------------
+
+/// Hard upper bound on the rank of first retained disparity (no confidence window).
+///
+/// Equivalent to `calc_rank_of_first_retained_disparity_between(a, b, 0.49)`.
+/// At `confidence_level = 0.49` the sliding-window threshold equals 1 for any
+/// bit width, so the raw first-mismatch rank is returned without adjustment.
+pub fn calc_definitive_max_rank_of_first_retained_disparity_between<P1, P2>(
+    a: &HereditaryStratigraphicColumn<P1>,
+    b: &HereditaryStratigraphicColumn<P2>,
+) -> Option<u64>
+where
+    P1: StratumRetentionPolicy,
+    P2: StratumRetentionPolicy,
+{
+    calc_rank_of_first_retained_disparity_between(a, b, 0.49)
+}
+
+/// Latest possible rank of last retained commonality (no confidence window).
+///
+/// Equivalent to `calc_rank_of_last_retained_commonality_between(a, b, 0.49)`.
+pub fn calc_definitive_max_rank_of_last_retained_commonality_between<P1, P2>(
+    a: &HereditaryStratigraphicColumn<P1>,
+    b: &HereditaryStratigraphicColumn<P2>,
+) -> Option<u64>
+where
+    P1: StratumRetentionPolicy,
+    P2: StratumRetentionPolicy,
+{
+    calc_rank_of_last_retained_commonality_between(a, b, 0.49)
+}
+
+/// Minimum ranks since first retained disparity (no confidence window).
+///
+/// Equivalent to `calc_ranks_since_first_retained_disparity_with(focal, other, 0.49)`.
+pub fn calc_definitive_min_ranks_since_first_retained_disparity_with<P1, P2>(
+    focal: &HereditaryStratigraphicColumn<P1>,
+    other: &HereditaryStratigraphicColumn<P2>,
+) -> Option<u64>
+where
+    P1: StratumRetentionPolicy,
+    P2: StratumRetentionPolicy,
+{
+    calc_ranks_since_first_retained_disparity_with(focal, other, 0.49)
+}
+
+/// Minimum ranks since last retained commonality (no confidence window).
+///
+/// Equivalent to `calc_ranks_since_last_retained_commonality_with(focal, other, 0.49)`.
+pub fn calc_definitive_min_ranks_since_last_retained_commonality_with<P1, P2>(
+    focal: &HereditaryStratigraphicColumn<P1>,
+    other: &HereditaryStratigraphicColumn<P2>,
+) -> Option<u64>
+where
+    P1: StratumRetentionPolicy,
+    P2: StratumRetentionPolicy,
+{
+    calc_ranks_since_last_retained_commonality_with(focal, other, 0.49)
+}
+
+// ---------------------------------------------------------------------------
+// Utility comparison helpers
+// ---------------------------------------------------------------------------
+
+/// Collision probability between two columns, using the minimum of their bit widths.
+///
+/// Convenience wrapper over `calc_probability_differentia_collision` that
+/// derives the bit width from the two columns directly.
+pub fn calc_probability_differentia_collision_between<P1, P2>(
+    a: &HereditaryStratigraphicColumn<P1>,
+    b: &HereditaryStratigraphicColumn<P2>,
+) -> f64
+where
+    P1: StratumRetentionPolicy,
+    P2: StratumRetentionPolicy,
+{
+    let bit_width = core::cmp::min(
+        a.get_stratum_differentia_bit_width(),
+        b.get_stratum_differentia_bit_width(),
+    );
+    calc_probability_differentia_collision(bit_width)
+}
+
+/// Return the ranks retained by `a` but not `b`, and those retained by `b` but not `a`.
+///
+/// Performs a two-pointer merge and collects the symmetric difference,
+/// returning `(only_in_a, only_in_b)` as sorted vectors.
+pub fn diff_retained_ranks<P1, P2>(
+    a: &HereditaryStratigraphicColumn<P1>,
+    b: &HereditaryStratigraphicColumn<P2>,
+) -> (alloc::vec::Vec<u64>, alloc::vec::Vec<u64>)
+where
+    P1: StratumRetentionPolicy,
+    P2: StratumRetentionPolicy,
+{
+    let mut only_a = alloc::vec::Vec::new();
+    let mut only_b = alloc::vec::Vec::new();
+
+    let mut iter_a = a.iter_retained_ranks().peekable();
+    let mut iter_b = b.iter_retained_ranks().peekable();
+
+    loop {
+        match (iter_a.peek().copied(), iter_b.peek().copied()) {
+            (Some(ra), Some(rb)) => match ra.cmp(&rb) {
+                core::cmp::Ordering::Less => {
+                    only_a.push(ra);
+                    iter_a.next();
+                }
+                core::cmp::Ordering::Greater => {
+                    only_b.push(rb);
+                    iter_b.next();
+                }
+                core::cmp::Ordering::Equal => {
+                    iter_a.next();
+                    iter_b.next();
+                }
+            },
+            (Some(ra), None) => {
+                only_a.push(ra);
+                iter_a.next();
+            }
+            (None, Some(rb)) => {
+                only_b.push(rb);
+                iter_b.next();
+            }
+            (None, None) => break,
+        }
+    }
+
+    (only_a, only_b)
+}
+
+/// Return the stratum at the last retained common ancestor rank, if any.
+///
+/// Looks up `calc_rank_of_last_retained_commonality_between` and then
+/// returns `a.get_stratum_at_rank(rank)`. The stratum is from column `a`;
+/// at a matching rank the differentia in `b` is guaranteed to match.
+pub fn get_last_common_stratum_between<P1, P2>(
+    a: &HereditaryStratigraphicColumn<P1>,
+    b: &HereditaryStratigraphicColumn<P2>,
+    confidence_level: f64,
+) -> Option<crate::column::Stratum>
+where
+    P1: StratumRetentionPolicy,
+    P2: StratumRetentionPolicy,
+{
+    let rank = calc_rank_of_last_retained_commonality_between(a, b, confidence_level)?;
+    a.get_stratum_at_rank(rank).copied()
+}
+
+// ---------------------------------------------------------------------------
 // Definitive no-common-ancestor test
 // ---------------------------------------------------------------------------
 
@@ -530,5 +682,78 @@ mod tests {
             since_disp <= since_comm,
             "ranks_since_disparity={since_disp} must be ≤ ranks_since_commonality={since_comm}"
         );
+    }
+
+    #[test]
+    fn definitive_max_disparity_matches_low_confidence() {
+        let a = make_col(&[(0, 100), (1, 200), (2, 300), (3, 400)], 4);
+        let b = make_col(&[(0, 100), (1, 200), (2, 999), (3, 888)], 4);
+        let definitive = calc_definitive_max_rank_of_first_retained_disparity_between(&a, &b);
+        let low_conf = calc_rank_of_first_retained_disparity_between(&a, &b, 0.49);
+        assert_eq!(definitive, low_conf);
+        assert_eq!(definitive, Some(2));
+    }
+
+    #[test]
+    fn definitive_max_commonality_matches_low_confidence() {
+        let a = make_col(&[(0, 100), (1, 200), (2, 300), (3, 400)], 4);
+        let b = make_col(&[(0, 100), (1, 200), (2, 999), (3, 888)], 4);
+        let definitive = calc_definitive_max_rank_of_last_retained_commonality_between(&a, &b);
+        let low_conf = calc_rank_of_last_retained_commonality_between(&a, &b, 0.49);
+        assert_eq!(definitive, low_conf);
+        assert_eq!(definitive, Some(1));
+    }
+
+    #[test]
+    fn diff_retained_ranks_symmetric_difference() {
+        // a retains 0,1,2,3; b retains 0,2,4
+        let a = make_col(&[(0, 10), (1, 20), (2, 30), (3, 40)], 4);
+        let b = make_col(&[(0, 10), (2, 20), (4, 30)], 5);
+        let (only_a, only_b) = diff_retained_ranks(&a, &b);
+        assert_eq!(only_a, alloc::vec![1, 3]);
+        assert_eq!(only_b, alloc::vec![4]);
+    }
+
+    #[test]
+    fn diff_retained_ranks_identical() {
+        let a = make_col(&[(0, 10), (1, 20)], 2);
+        let b = make_col(&[(0, 10), (1, 20)], 2);
+        let (only_a, only_b) = diff_retained_ranks(&a, &b);
+        assert!(only_a.is_empty());
+        assert!(only_b.is_empty());
+    }
+
+    #[test]
+    fn collision_probability_between_uses_min_bit_width() {
+        let a = make_col(&[(0, 1)], 1); // 64-bit
+        // Create a 1-bit column via from_parts
+        let b = crate::column::HereditaryStratigraphicColumn::from_parts(
+            crate::policies::PerfectResolutionPolicy::new(),
+            1,
+            alloc::vec![crate::column::Stratum {
+                rank: 0,
+                differentia: crate::differentia::Differentia::new(1, 1),
+            }],
+            1,
+        );
+        // min(64, 1) = 1 → p = 0.5
+        let p = calc_probability_differentia_collision_between(&a, &b);
+        assert!((p - 0.5).abs() < 1e-10);
+    }
+
+    #[test]
+    fn get_last_common_stratum_returns_correct_rank() {
+        let a = make_col(&[(0, 100), (1, 200), (2, 300), (3, 400)], 4);
+        let b = make_col(&[(0, 100), (1, 200), (2, 999), (3, 888)], 4);
+        let stratum = get_last_common_stratum_between(&a, &b, 0.95);
+        assert!(stratum.is_some());
+        assert_eq!(stratum.unwrap().rank, 1);
+    }
+
+    #[test]
+    fn get_last_common_stratum_none_no_ancestor() {
+        let a = make_col(&[(0, 111)], 1);
+        let b = make_col(&[(0, 222)], 1);
+        assert!(get_last_common_stratum_between(&a, &b, 0.95).is_none());
     }
 }

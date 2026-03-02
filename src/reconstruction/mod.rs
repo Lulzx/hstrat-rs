@@ -22,22 +22,33 @@ pub use estimation::{
     estimate_ranks_since_mrca_with,
 };
 pub use juxtaposition::{
+    calc_definitive_max_rank_of_first_retained_disparity_between,
+    calc_definitive_max_rank_of_last_retained_commonality_between,
+    calc_definitive_min_ranks_since_first_retained_disparity_with,
+    calc_definitive_min_ranks_since_last_retained_commonality_with,
     calc_min_implausible_spurious_collisions,
     calc_probability_differentia_collision,
+    calc_probability_differentia_collision_between,
     calc_rank_of_first_retained_disparity_between,
     calc_rank_of_last_retained_commonality_between,
     calc_ranks_since_first_retained_disparity_with,
     calc_ranks_since_last_retained_commonality_with,
+    diff_retained_ranks,
     does_definitively_share_no_common_ancestor,
+    get_last_common_stratum_between,
     get_nth_common_rank_between,
     iter_ranks_of_retained_commonality_between,
 };
 pub use mrca::{
+    calc_rank_of_earliest_detectable_mrca_among,
+    calc_rank_of_earliest_detectable_mrca_between,
     calc_rank_of_mrca_bounds_among,
     calc_rank_of_mrca_bounds_between,
+    calc_rank_of_mrca_bounds_between_with_confidence,
     calc_rank_of_mrca_uncertainty_among,
     calc_ranks_since_mrca_bounds_between,
     does_have_any_common_ancestor,
+    does_have_any_common_ancestor_with_confidence,
     does_share_any_common_ancestor_among,
 };
 pub use postprocessors::{
@@ -47,4 +58,4 @@ pub use postprocessors::{
     CompoundPostprocessor,
     TriePostprocessor,
 };
-pub use priors::{ArbitraryPrior, ExponentialPrior, Prior, UniformPrior};
+pub use priors::{ArbitraryPrior, ExponentialPrior, GeometricPrior, Prior, UniformPrior};

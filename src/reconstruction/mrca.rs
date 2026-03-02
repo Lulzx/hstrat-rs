@@ -193,6 +193,143 @@ where
     calc_rank_of_mrca_bounds_among(population, confidence_level).map(|_| true)
 }
 
+// ---------------------------------------------------------------------------
+// Confidence-adjusted MRCA bounds (Python API parity)
+// ---------------------------------------------------------------------------
+
+/// Check whether two columns share a common ancestor at the given confidence level.
+///
+/// Uses the sliding-window confidence adjustment from
+/// `calc_rank_of_last_retained_commonality_between`: returns `true` only when
+/// there are enough consecutive matching common strata to rule out spurious
+/// collisions at the given confidence level.
+///
+/// This is the confidence-adjusted version of `does_have_any_common_ancestor`.
+/// At 64-bit differentia the threshold is always 1, so the two functions
+/// are equivalent. At lower bit widths they may differ.
+pub fn does_have_any_common_ancestor_with_confidence<P1, P2>(
+    a: &HereditaryStratigraphicColumn<P1>,
+    b: &HereditaryStratigraphicColumn<P2>,
+    confidence_level: f64,
+) -> bool
+where
+    P1: StratumRetentionPolicy,
+    P2: StratumRetentionPolicy,
+{
+    use super::juxtaposition::calc_rank_of_last_retained_commonality_between;
+    calc_rank_of_last_retained_commonality_between(a, b, confidence_level).is_some()
+}
+
+/// Confidence-adjusted MRCA bounds (Python `calc_rank_of_mrca_bounds_between` parity).
+///
+/// Uses a sliding-window threshold on last retained commonality at
+/// `confidence_level`, and the definitive (confidence=0.49) first disparity
+/// as the exclusive upper bound. Returns `None` when there is insufficient
+/// evidence of common ancestry at the given confidence level.
+///
+/// Returns `(inclusive_lower, inclusive_upper)` following Rust convention.
+/// Python returns `(inclusive_lower, exclusive_upper)` — subtract 1 from
+/// `exclusive_upper` to convert.
+///
+/// Differs from `calc_rank_of_mrca_bounds_between` (the raw merge-scan version)
+/// in that it respects the confidence threshold; they are equivalent at the
+/// default 64-bit differentia width where the threshold is always 1.
+pub fn calc_rank_of_mrca_bounds_between_with_confidence<P1, P2>(
+    a: &HereditaryStratigraphicColumn<P1>,
+    b: &HereditaryStratigraphicColumn<P2>,
+    confidence_level: f64,
+) -> Option<(u64, u64)>
+where
+    P1: StratumRetentionPolicy,
+    P2: StratumRetentionPolicy,
+{
+    use super::juxtaposition::{
+        calc_definitive_max_rank_of_first_retained_disparity_between,
+        calc_rank_of_last_retained_commonality_between,
+    };
+
+    // Lower bound: last commonality at the given confidence (None → not enough evidence)
+    let lo = calc_rank_of_last_retained_commonality_between(a, b, confidence_level)?;
+
+    // Upper bound (inclusive): definitive first disparity - 1
+    let hi = match calc_definitive_max_rank_of_first_retained_disparity_between(a, b) {
+        Some(0) => return None, // mismatch at rank 0 → no common ancestor
+        Some(fd) => fd - 1,    // exclusive → inclusive
+        None => core::cmp::min(
+            a.get_num_strata_deposited().saturating_sub(1),
+            b.get_num_strata_deposited().saturating_sub(1),
+        ),
+    };
+
+    if lo > hi {
+        None
+    } else {
+        Some((lo, hi))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Earliest detectable MRCA
+// ---------------------------------------------------------------------------
+
+/// The earliest rank at which the MRCA between two columns could be detected.
+///
+/// Returns the smallest rank present in both columns' retained rank sets
+/// (i.e., the first element of their intersection). This is the oldest
+/// common checkpoint at which a match or mismatch could be observed.
+///
+/// Returns `None` if the two columns share no common retained ranks.
+pub fn calc_rank_of_earliest_detectable_mrca_between<P1, P2>(
+    a: &HereditaryStratigraphicColumn<P1>,
+    b: &HereditaryStratigraphicColumn<P2>,
+) -> Option<u64>
+where
+    P1: StratumRetentionPolicy,
+    P2: StratumRetentionPolicy,
+{
+    let mut iter_a = a.iter_retained_ranks().peekable();
+    let mut iter_b = b.iter_retained_ranks().peekable();
+    while let Some(&ra) = iter_a.peek() {
+        let rb = match iter_b.peek() {
+            Some(&r) => r,
+            None => return None,
+        };
+        match ra.cmp(&rb) {
+            core::cmp::Ordering::Less => { iter_a.next(); }
+            core::cmp::Ordering::Greater => { iter_b.next(); }
+            core::cmp::Ordering::Equal => return Some(ra),
+        }
+    }
+    None
+}
+
+/// The earliest rank at which the population MRCA could be detected.
+///
+/// Takes the maximum over all pairs, since every pair must share the
+/// checkpoint for it to be informative about the population's MRCA.
+///
+/// Returns `None` if the population has fewer than 2 members or if any
+/// pair shares no common retained ranks.
+pub fn calc_rank_of_earliest_detectable_mrca_among<P>(
+    population: &[HereditaryStratigraphicColumn<P>],
+) -> Option<u64>
+where
+    P: StratumRetentionPolicy,
+{
+    if population.len() < 2 {
+        return None;
+    }
+    let mut max_earliest: Option<u64> = Some(0);
+    for i in 0..population.len() {
+        for j in (i + 1)..population.len() {
+            let earliest =
+                calc_rank_of_earliest_detectable_mrca_between(&population[i], &population[j])?;
+            max_earliest = Some(max_earliest.map_or(earliest, |m| m.max(earliest)));
+        }
+    }
+    max_earliest
+}
+
 /// Compute the intersection of two columns' retained rank sets via merge-scan.
 fn intersect_retained_ranks<P1, P2>(
     a: &HereditaryStratigraphicColumn<P1>,
@@ -484,5 +621,75 @@ mod tests {
         // Match at 0, 5, 10 — mismatch at 15 → MRCA in [10, 14]
         assert_eq!(lower, 10);
         assert_eq!(upper, 14);
+    }
+
+    #[test]
+    fn earliest_detectable_mrca_first_common_rank() {
+        // Both columns have rank 0, 5, 10 in common
+        let col_a = make_column_from_strata(vec![(0, 1), (5, 2), (10, 3)], 11);
+        let col_b = make_column_from_strata(vec![(0, 1), (5, 2), (10, 3)], 11);
+        assert_eq!(calc_rank_of_earliest_detectable_mrca_between(&col_a, &col_b), Some(0));
+    }
+
+    #[test]
+    fn earliest_detectable_mrca_sparse_intersection() {
+        // a: 0,2,4  b: 1,3,4 → intersection: {4}
+        let col_a = make_column_from_strata(vec![(0, 1), (2, 2), (4, 3)], 5);
+        let col_b = make_column_from_strata(vec![(1, 1), (3, 2), (4, 3)], 5);
+        assert_eq!(calc_rank_of_earliest_detectable_mrca_between(&col_a, &col_b), Some(4));
+    }
+
+    #[test]
+    fn earliest_detectable_mrca_no_intersection() {
+        // a: 0,2,4  b: 1,3,5 → intersection: empty
+        let col_a = make_column_from_strata(vec![(0, 1), (2, 2), (4, 3)], 5);
+        let col_b = make_column_from_strata(vec![(1, 1), (3, 2), (5, 3)], 6);
+        assert_eq!(calc_rank_of_earliest_detectable_mrca_between(&col_a, &col_b), None);
+    }
+
+    #[test]
+    fn confidence_adjusted_bounds_match_raw_at_64bit() {
+        // At 64-bit, threshold=1 → both versions are equivalent
+        let col_a =
+            make_column_from_strata(vec![(0, 100), (1, 200), (2, 300), (3, 400), (4, 500)], 5);
+        let col_b =
+            make_column_from_strata(vec![(0, 100), (1, 200), (2, 300), (3, 999), (4, 888)], 5);
+
+        let raw = calc_rank_of_mrca_bounds_between(&col_a, &col_b);
+        let conf = calc_rank_of_mrca_bounds_between_with_confidence(&col_a, &col_b, 0.95);
+        assert_eq!(raw, conf, "raw and confidence-adjusted bounds should agree at 64-bit");
+    }
+
+    #[test]
+    fn confidence_adjusted_bounds_none_when_no_common_ancestor() {
+        let col_a = make_column_from_strata(vec![(0, 111)], 1);
+        let col_b = make_column_from_strata(vec![(0, 222)], 1);
+        assert!(calc_rank_of_mrca_bounds_between_with_confidence(&col_a, &col_b, 0.95).is_none());
+    }
+
+    #[test]
+    fn does_have_any_common_ancestor_with_confidence_parent_child() {
+        let mut parent =
+            HereditaryStratigraphicColumn::with_seed(PerfectResolutionPolicy::new(), 64, 42);
+        parent.deposit_strata(10);
+        let child = parent.clone_descendant();
+        assert!(does_have_any_common_ancestor_with_confidence(&parent, &child, 0.95));
+    }
+
+    #[test]
+    fn does_have_any_common_ancestor_with_confidence_no_ancestor() {
+        let col_a = make_column_from_strata(vec![(0, 111)], 1);
+        let col_b = make_column_from_strata(vec![(0, 222)], 1);
+        assert!(!does_have_any_common_ancestor_with_confidence(&col_a, &col_b, 0.95));
+    }
+
+    #[test]
+    fn earliest_detectable_mrca_among_is_max_of_pairs() {
+        // Three columns; pair (a,c) has earliest rank 5, others have 0
+        let col_a = make_column_from_strata(vec![(0, 1), (5, 2), (10, 3)], 11);
+        let col_b = make_column_from_strata(vec![(0, 1), (5, 2), (10, 3)], 11);
+        let col_c = make_column_from_strata(vec![(5, 1), (10, 2)], 11);
+        let pop = vec![col_a, col_b, col_c];
+        assert_eq!(calc_rank_of_earliest_detectable_mrca_among(&pop), Some(5));
     }
 }

@@ -31,7 +31,7 @@ without centralized bookkeeping.
 - Python bindings via PyO3 (all policies, MRCA, tree building)
 - Cross-validated against Python hstrat: 22 policy configurations
   verified for n=0..1000, plus MRCA bounds and serialization packets
-- 338 tests (229 unit + 109 integration) with proptest property-based
+- 359 tests (250 unit + 109 integration) with proptest property-based
   testing, fixture-based cross-validation, and tests ported from the
   Python hstrat test suite
 
@@ -97,7 +97,7 @@ python -m venv .venv
 .venv/bin/python scripts/extract_test_vectors.py
 ```
 
-338 tests (229 unit + 109 integration) verify internal consistency
+359 tests (250 unit + 109 integration) verify internal consistency
 and bit-for-bit compatibility with Python hstrat. Coverage includes:
 
 - Policy invariants and dwindle-only guarantees for all 11 policies
