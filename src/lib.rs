@@ -68,6 +68,11 @@ pub use reconstruction::{
     TriePostprocessor,
     // Tree
     build_tree,
+    // Distance-based trees
+    build_distance_matrix,
+    build_tree_nj,
+    build_tree_upgma,
+    estimate_patristic_distance_between,
 };
 
 // Serialization re-exports

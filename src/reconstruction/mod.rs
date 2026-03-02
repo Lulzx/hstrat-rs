@@ -1,4 +1,5 @@
 pub mod build_tree;
+pub mod distance_tree;
 pub mod estimation;
 pub mod juxtaposition;
 pub mod mrca;
@@ -57,5 +58,11 @@ pub use postprocessors::{
     AssignOriginTimeNodeRankPostprocessor,
     CompoundPostprocessor,
     TriePostprocessor,
+};
+pub use distance_tree::{
+    build_distance_matrix,
+    build_tree_nj,
+    build_tree_upgma,
+    estimate_patristic_distance_between,
 };
 pub use priors::{ArbitraryPrior, ExponentialPrior, GeometricPrior, Prior, UniformPrior};

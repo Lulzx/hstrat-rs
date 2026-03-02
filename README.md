@@ -18,11 +18,14 @@ without centralized bookkeeping.
 - `DynamicPolicy` enum for runtime policy dispatch
 - Pairwise and population-level MRCA bound estimation
 - Probabilistic MRCA inference (naive, maximum-likelihood, unbiased
-  estimators) with configurable priors (arbitrary, uniform, exponential)
+  estimators) with configurable priors (arbitrary, uniform, exponential,
+  geometric)
 - Column juxtaposition: commonality/disparity iteration, spurious
   collision probability, confidence-adjusted bounds
 - Trie-based tree reconstruction with search-table acceleration
   (two algorithms: shortcut-consolidation + naive DFS fallback)
+- Distance-based tree reconstruction: UPGMA and Neighbor-Joining from
+  pairwise patristic-distance estimates
 - Pluggable tree postprocessors for origin-time assignment
 - Binary packet, JSON record, and integer (sentry-bit u128)
   serialization, round-trip compatible with Python hstrat
@@ -31,7 +34,7 @@ without centralized bookkeeping.
 - Python bindings via PyO3 (all policies, MRCA, tree building)
 - Cross-validated against Python hstrat: 22 policy configurations
   verified for n=0..1000, plus MRCA bounds and serialization packets
-- 359 tests (250 unit + 109 integration) with proptest property-based
+- 371 tests (262 unit + 109 integration) with proptest property-based
   testing, fixture-based cross-validation, and tests ported from the
   Python hstrat test suite
 
@@ -97,7 +100,7 @@ python -m venv .venv
 .venv/bin/python scripts/extract_test_vectors.py
 ```
 
-359 tests (250 unit + 109 integration) verify internal consistency
+371 tests (262 unit + 109 integration) verify internal consistency
 and bit-for-bit compatibility with Python hstrat. Coverage includes:
 
 - Policy invariants and dwindle-only guarantees for all 11 policies
@@ -105,7 +108,7 @@ and bit-for-bit compatibility with Python hstrat. Coverage includes:
 - MRCA commutativity, cross-policy, multi-bit-width, and deep evolution tests
 - Packet and JSON serialization round-trips for all deterministic policies
 - Property-based testing (proptest) across column, serialization, and policy parameters
-- Tree reconstruction validation with both algorithms on varied topologies
+- Tree reconstruction validation with trie algorithms (shortcut-consolidation, DFS) and distance-based algorithms (UPGMA, NJ) on varied topologies
 - Fixture-based cross-validation against Python hstrat reference output
 
 ## License
